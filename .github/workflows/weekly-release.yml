@@ -74,7 +74,7 @@ jobs:
             ${{ steps.keygen.outputs.out_dir }}/openresty-upstream.asc
             ${{ steps.keygen.outputs.out_dir }}/openresty-keys.clearsigned.asc
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 10
 
   build:
     needs: prepare-key
@@ -83,7 +83,7 @@ jobs:
       contents: read
     with:
       context: ./docker
-      # file: ./docker/Dockerfile
+      file: ./docker/Dockerfile
       output: image
       push: false
       export-image: true
@@ -91,14 +91,13 @@ jobs:
       meta-images: openresty-trixie-repo
       meta-tags: |
         type=raw,value=${{ needs.prepare-key.outputs.release-tag }}
-      build-contexts: |
-        keys=${{ runner.temp }}/keys-context
       pre-steps: |
-        - name: Download keyring context
+        - name: Download public keys into docker context
           uses: actions/download-artifact@v4
           with:
             name: openresty-mirror-keys
-            path: ${{ runner.temp }}/keys-context
+            pattern: 'openresty-*.asc'
+            path: ./docker
     secrets:
       secrets: |
         apt_signing_key=${{ needs.prepare-key.outputs.gpg-private-key }}
