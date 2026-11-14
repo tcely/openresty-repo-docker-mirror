@@ -11,9 +11,9 @@ RUN apt-get update && \
         wget && \
     rm -rf /var/lib/apt/lists/*
 
-# Install both public keys into /etc/apt/keyrings/ from the named 'keys' context
-COPY --from=keys --chown=0:0 --chmod=0644 openresty-upstream.asc /etc/apt/keyrings/openresty-upstream.asc
-COPY --from=keys --chown=0:0 --chmod=0644 openresty-mirror.asc /etc/apt/keyrings/openresty-mirror.asc
+# Copy both public keys from the default build context
+COPY --chown=0:0 --chmod=0644 openresty-upstream.asc /etc/apt/keyrings/openresty-upstream.asc
+COPY --chown=0:0 --chmod=0644 openresty-mirror.asc /etc/apt/keyrings/openresty-mirror.asc
 
 RUN --mount=type=secret,id=apt_signing_key,required=true \
     set -eux; \
@@ -105,10 +105,10 @@ RUN --mount=type=secret,id=apt_signing_key,required=true \
 FROM python:3.15-slim-trixie
 
 # Keep both public keys in /etc/apt/keyrings/ and also serve them from /srv/repo/ over HTTP
-COPY --from=keys --chown=0:0 --chmod=0644 openresty-upstream.asc /etc/apt/keyrings/openresty-upstream.asc
-COPY --from=keys --chown=0:0 --chmod=0644 openresty-mirror.asc /etc/apt/keyrings/openresty-mirror.asc
-COPY --from=keys --chown=0:0 --chmod=0644 openresty-upstream.asc /srv/repo/openresty-upstream.asc
-COPY --from=keys --chown=0:0 --chmod=0644 openresty-mirror.asc /srv/repo/openresty-mirror.asc
+COPY --chown=0:0 --chmod=0644 openresty-upstream.asc /etc/apt/keyrings/openresty-upstream.asc
+COPY --chown=0:0 --chmod=0644 openresty-mirror.asc /etc/apt/keyrings/openresty-mirror.asc
+COPY --chown=0:0 --chmod=0644 openresty-upstream.asc /srv/repo/openresty-upstream.asc
+COPY --chown=0:0 --chmod=0644 openresty-mirror.asc /srv/repo/openresty-mirror.asc
 
 COPY --from=repo-builder --chown=0:0 --chmod=0644 /srv/repo /srv/repo
 RUN find /srv/repo -type d -exec chmod 0755 {} +
