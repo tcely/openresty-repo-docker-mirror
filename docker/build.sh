@@ -75,6 +75,7 @@ do
     ' > "${ARCH_TMP}/debs.tsv"
     test -s "${ARCH_TMP}/debs.tsv"
 
+    set +x
     : > "${ARCH_TMP}/aria2.input"
     while IFS=$'\t' read -r expected_sha relpath extra
     do
@@ -101,6 +102,7 @@ do
             printf '  checksum=sha-256=%s\n' "${expected_sha}"
         } >> "${ARCH_TMP}/aria2.input"
     done < "${ARCH_TMP}/debs.tsv"
+    set -x
 
     aria2c \
         --remote-time \
@@ -120,7 +122,7 @@ do
         --max-tries=5 \
         --retry-wait=2
 
-    find /srv/repo/pool -name '*.sha256' -exec cat '{}' + | sha256sum -c --quiet -w --strict
+    find /srv/repo/pool -name '*.sha256' -exec cat '{}' + | sha256sum --quiet -c -w --strict
     rm -rf "${ARCH_TMP}"
 
     mkdir -p "dists/trixie/openresty/binary-${arch}"
