@@ -1,6 +1,9 @@
 name: Weekly Release
 
 on:
+  push:
+    branches:
+      - 'tcely-patch-1'
   schedule:
     - cron: '0 19 * * 2'
   workflow_dispatch:
