@@ -34,7 +34,7 @@ jobs:
         run: bash ./scripts/prepare-keys.sh
 
       - name: Upload keyring artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: openresty-mirror-keys
           path: |
@@ -76,13 +76,13 @@ jobs:
           echo "rootfs_dir=$(mktemp -d "${RUNNER_TEMP}/rootfs.XXXXXX")" >> "${GITHUB_OUTPUT}"
 
       - name: Download keyring artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: openresty-mirror-keys
           path: ${{ steps.stage.outputs.assets_dir }}
 
       - name: Download exported platform rootfs artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: 'openresty-trixie-rootfs*'
           merge-multiple: true
