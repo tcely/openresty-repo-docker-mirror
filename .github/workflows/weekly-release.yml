@@ -51,7 +51,7 @@ jobs:
       contents: read
     with:
       context: ./docker
-      file: ./docker/Dockerfile
+      # file: Dockerfile
       output: local
       artifact-upload: true
       artifact-name: openresty-trixie-rootfs
