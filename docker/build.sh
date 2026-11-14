@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-set -eux
+set -euxo pipefail
 
 WORK_DIR="$(mktemp -d)"
 trap 'rm -rf "${WORK_DIR}"' EXIT
@@ -32,11 +32,23 @@ do
     UPSTREAM="${BASE_URL}${REPO_PATH}"
     ARCH_TMP="${WORK_DIR}/upstream-${arch}"
 
-    mkdir "${ARCH_TMP}"
+    mkdir -m 0700 "${ARCH_TMP}"
 
     PKG_REL="openresty/binary-${arch}/Packages.gz"
 
-    aria2c --quiet --allow-overwrite=true --max-tries=5 --retry-wait=2 \
+    aria2c \
+        --force-sequential \
+        --remote-time \
+        --summary-interval=0 \
+        --console-log-level=warn \
+        --check-certificate=true \
+        --min-tls-version=TLSv1.2 \
+        --follow-metalink=false \
+        --follow-torrent=false \
+        --allow-overwrite=true \
+        --auto-file-renaming=false \
+        --max-tries=5 \
+        --retry-wait=2 \
         --dir="${ARCH_TMP}" \
         "${UPSTREAM}/dists/bookworm/Release" \
         "${UPSTREAM}/dists/bookworm/Release.gpg" \
@@ -51,36 +63,53 @@ do
         in_sha && $3 == target { print $1; exit; }
     '
     EXPECTED_PKG_SHA256="$(awk -v target="${PKG_REL}" "${_awk_prog}" "${ARCH_TMP}/Release")"
-    test -n "${EXPECTED_PKG_SHA256}"
+    [[ "${EXPECTED_PKG_SHA256}" =~ ^[0-9a-f]{64}$ ]]
     printf '%s *%s\n' "${EXPECTED_PKG_SHA256}" "${ARCH_TMP}/Packages.gz" | sha256sum -c -
 
-    _awk_prog='
+    # Reject any CR/NUL bytes in decompressed Packages metadata before parsing
+    gzip -cd "${ARCH_TMP}/Packages.gz" | tr -d '\r' | awk '
         /^Filename:/ { f=$2; }
         /^SHA256:/   { s=$2; }
-        /^$/         { if (f && s) print s, f; f=""; s=""; }
-        END          { if (f && s) print s, f; }
-    '
-    gzip -cd "${ARCH_TMP}/Packages.gz" | awk "${_awk_prog}" > "${ARCH_TMP}/debs.sha256"
-    test -s "${ARCH_TMP}/debs.sha256"
+        /^$/         { if (f && s) print s "\t" f; f=""; s=""; }
+        END          { if (f && s) print s "\t" f; }
+    ' > "${ARCH_TMP}/debs.tsv"
+    test -s "${ARCH_TMP}/debs.tsv"
 
-    # 1. Create the .sha256 and .url sidecars first, and build the aria2c manifest from them
     : > "${ARCH_TMP}/aria2.input"
-    while read -r expected_sha relpath
+    while IFS=$'\t' read -r expected_sha relpath extra
     do
-        mkdir -p "/srv/repo/$(dirname "${relpath}")"
-        printf '%s */srv/repo/%s\n' "${expected_sha}" "${relpath}" >| "/srv/repo/${relpath}.sha256"
-        printf '%s/%s\n' "${UPSTREAM}" "${relpath}" >| "/srv/repo/${relpath}.url"
+        # 1. Ensure strictly 2 tab-delimited columns (no extra fields or embedded whitespace)
+        test -z "${extra:-}"
+
+        # 2. Validate SHA-256 digest format
+        [[ "${expected_sha}" =~ ^[0-9a-f]{64}$ ]]
+
+        # 3. Validate relative path: strict pool/*.deb allowlist and no '/../' traversal
+        [[ "${relpath}" =~ ^pool/[A-Za-z0-9.+~/_-]+\.deb$ ]]
+        [[ "${relpath}" != *"/../"* ]]
+
+        TARGET_FILE="$(realpath -m "/srv/repo/${relpath}")"
+        [[ "${TARGET_FILE}" == /srv/repo/pool/* ]]
+
+        mkdir -p "$(dirname "${TARGET_FILE}")"
+        printf '%s *%s\n' "${expected_sha}" "${TARGET_FILE}" >| "${TARGET_FILE}.sha256"
+        printf '%s/%s\n' "${UPSTREAM}" "${relpath}" >| "${TARGET_FILE}.url"
 
         {
-            cat "/srv/repo/${relpath}.url"
+            cat "${TARGET_FILE}.url"
             printf '  out=%s\n' "${relpath}"
             printf '  checksum=sha-256=%s\n' "${expected_sha}"
         } >> "${ARCH_TMP}/aria2.input"
-    done < "${ARCH_TMP}/debs.sha256"
+    done < "${ARCH_TMP}/debs.tsv"
 
-    # 2. Download with bounded concurrency, retries, and per-file SHA-256 verification
     aria2c \
-        --quiet \
+        --remote-time \
+        --summary-interval=0 \
+        --console-log-level=warn \
+        --check-certificate=true \
+        --min-tls-version=TLSv1.2 \
+        --follow-metalink=false \
+        --follow-torrent=false \
         --dir=/srv/repo \
         --input-file="${ARCH_TMP}/aria2.input" \
         --max-concurrent-downloads=6 \
@@ -91,7 +120,7 @@ do
         --max-tries=5 \
         --retry-wait=2
 
-    find /srv/repo -name '*.sha256' -exec cat '{}' + | sha256sum -c -w --strict --quiet
+    find /srv/repo/pool -name '*.sha256' -exec cat '{}' + | sha256sum -c --quiet -w --strict
     rm -rf "${ARCH_TMP}"
 
     mkdir -p "dists/trixie/openresty/binary-${arch}"
