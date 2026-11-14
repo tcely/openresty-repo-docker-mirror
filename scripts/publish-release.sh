@@ -15,6 +15,8 @@ mkdir -m 0700 "${GNUPGHOME}"
 printf '%s\n' "${GPG_PRIVATE_KEY}" | gpg --batch --import
 FPR="$(gpg --batch --list-secret-keys --with-colons | awk -F: '/^fpr:/ {print $10; exit}')"
 
+ls -alR "${ROOTFS_DIR}" "${ASSETS_DIR}"
+
 # 1. Package each architecture rootfs into a Docker tar archive, checksum (--tag), compress, and sign
 for arch in amd64 arm64; do
   SRC_DIR="${ROOTFS_DIR}/linux_${arch}"
