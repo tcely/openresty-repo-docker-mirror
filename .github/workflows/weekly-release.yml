@@ -55,6 +55,7 @@ jobs:
     with:
       context: ./docker
       # file: Dockerfile
+      target: 'artifact'
       output: local
       sign: false
       artifact-upload: true
