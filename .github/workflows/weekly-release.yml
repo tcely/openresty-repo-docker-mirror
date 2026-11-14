@@ -58,10 +58,10 @@ jobs:
       artifact-retention-days: 1
       platforms: linux/amd64,linux/arm64
     secrets:
-      secrets: |
-        apt_signing_key=${{ needs.prepare-key.outputs.gpg-private-key }}
-        openresty_mirror_pub=${{ needs.prepare-key.outputs.gpg-mirror-pub }}
-        openresty_upstream_pub=${{ needs.prepare-key.outputs.gpg-upstream-pub }}
+      build-secrets: |
+        apt_signing_key: ${{ toJSON(needs.prepare-key.outputs.gpg-private-key) }}
+        openresty_mirror_pub: ${{ toJSON(needs.prepare-key.outputs.gpg-mirror-pub) }}
+        openresty_upstream_pub: ${{ toJSON(needs.prepare-key.outputs.gpg-upstream-pub) }}
 
   publish-release:
     needs: [prepare-key, build]
