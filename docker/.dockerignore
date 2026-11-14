@@ -1,4 +1,4 @@
 **
 !Dockerfile
-!openresty-mirror.asc
+!build.sh
 !openresty-upstream.asc
