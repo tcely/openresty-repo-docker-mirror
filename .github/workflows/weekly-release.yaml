@@ -1,4 +1,4 @@
-name: Weekly OpenResty Trixie Repo Release
+name: Weekly Release
 
 on:
   schedule:
