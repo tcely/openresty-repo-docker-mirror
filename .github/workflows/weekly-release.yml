@@ -6,7 +6,7 @@ on:
       - 'tcely-patch-1'
   schedule:
     # Runs every Sunday at 04:00 UTC
-    - cron: '3 19 * * 2'
+    - cron: '3 18 * * 2'
   workflow_dispatch:
 
 permissions:
@@ -25,10 +25,12 @@ jobs:
 
       - name: Set weekly release tag
         id: meta
+        shell: 'bash'
         run: echo "tag=v$(date -u +%Y.%m.%d)" >> "${GITHUB_OUTPUT}"
 
       - name: Generate ephemeral RSA 3072 GPG keypair and fetch upstream key
         id: keygen
+        shell: 'bash'
         env:
           RELEASE_TAG: ${{ steps.meta.outputs.tag }}
         run: bash ./scripts/prepare-keys.sh
@@ -72,6 +74,7 @@ jobs:
 
       - name: Prepare temporary staging directories
         id: stage
+        shell: 'bash'
         run: |
           echo "assets_dir=$(mktemp -d "${RUNNER_TEMP}/release-assets.XXXXXX")" >> "${GITHUB_OUTPUT}"
           echo "rootfs_dir=$(mktemp -d "${RUNNER_TEMP}/rootfs.XXXXXX")" >> "${GITHUB_OUTPUT}"
@@ -90,6 +93,7 @@ jobs:
           path: ${{ steps.stage.outputs.rootfs_dir }}
 
       - name: Package, checksum, sign, verify, and publish immutable release
+        shell: 'bash'
         env:
           GH_TOKEN: ${{ github.token }}
           GPG_PRIVATE_KEY: ${{ needs.prepare-key.outputs.gpg-private-key }}
