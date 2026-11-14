@@ -33,27 +33,25 @@ do
     ARCH_TMP="${WORK_DIR}/upstream-${arch}"
 
     mkdir "${ARCH_TMP}"
-    wget -q -O "${ARCH_TMP}/Release" "${UPSTREAM}/dists/bookworm/Release" &
-    dl=$!
-    wget -q -O "${ARCH_TMP}/Release.gpg" "${UPSTREAM}/dists/bookworm/Release.gpg"
- 
-    wait "${dl}"
-    gpgv --keyring "${WORK_DIR}/openresty-upstream.gpg" \
-        "${ARCH_TMP}/Release.gpg" "${ARCH_TMP}/Release"
 
     PKG_REL="openresty/binary-${arch}/Packages.gz"
 
-    wget -q -O "${ARCH_TMP}/Packages.gz" "${UPSTREAM}/dists/bookworm/${PKG_REL}" &
-    dl=$!
+    aria2c --quiet --allow-overwrite=true --max-tries=5 --retry-wait=2 \
+        --dir="${ARCH_TMP}" \
+        "${UPSTREAM}/dists/bookworm/Release" \
+        "${UPSTREAM}/dists/bookworm/Release.gpg" \
+        "${UPSTREAM}/dists/bookworm/${PKG_REL}"
+
+    gpgv --keyring "${WORK_DIR}/openresty-upstream.gpg" \
+        "${ARCH_TMP}/Release.gpg" "${ARCH_TMP}/Release"
+
     _awk_prog='
         /^SHA256:/ { in_sha=1; next; }
         /^[^ ]/    { in_sha=0; }
         in_sha && $3 == target { print $1; exit; }
-        '
+    '
     EXPECTED_PKG_SHA256="$(awk -v target="${PKG_REL}" "${_awk_prog}" "${ARCH_TMP}/Release")"
     test -n "${EXPECTED_PKG_SHA256}"
-
-    wait "${dl}"
     printf '%s *%s\n' "${EXPECTED_PKG_SHA256}" "${ARCH_TMP}/Packages.gz" | sha256sum -c -
 
     _awk_prog='
@@ -61,20 +59,39 @@ do
         /^SHA256:/   { s=$2; }
         /^$/         { if (f && s) print s, f; f=""; s=""; }
         END          { if (f && s) print s, f; }
-        '
+    '
     gzip -cd "${ARCH_TMP}/Packages.gz" | awk "${_awk_prog}" > "${ARCH_TMP}/debs.sha256"
     test -s "${ARCH_TMP}/debs.sha256"
 
+    # 1. Create the .sha256 and .url sidecars first, and build the aria2c manifest from them
+    : > "${ARCH_TMP}/aria2.input"
     while read -r expected_sha relpath
     do
         mkdir -p "/srv/repo/$(dirname "${relpath}")"
-        printf '%s */srv/repo/%s\n' "${expected_sha}" "${relpath}"  >| "/srv/repo/${relpath}.sha256"
+        printf '%s */srv/repo/%s\n' "${expected_sha}" "${relpath}" >| "/srv/repo/${relpath}.sha256"
         printf '%s/%s\n' "${UPSTREAM}" "${relpath}" >| "/srv/repo/${relpath}.url"
-        wget -q -O "/srv/repo/${relpath}" "${UPSTREAM}/${relpath}" &
+
+        {
+            cat "/srv/repo/${relpath}.url"
+            printf '  out=%s\n' "${relpath}"
+            printf '  checksum=sha-256=%s\n' "${expected_sha}"
+        } >> "${ARCH_TMP}/aria2.input"
     done < "${ARCH_TMP}/debs.sha256"
 
-    wait
-    find /srv/repo -name '*.sha256' -exec cat '{}' + | sha256sum -c -w --strict
+    # 2. Download with bounded concurrency, retries, and per-file SHA-256 verification
+    aria2c \
+        --quiet \
+        --dir=/srv/repo \
+        --input-file="${ARCH_TMP}/aria2.input" \
+        --max-concurrent-downloads=6 \
+        --max-connection-per-server=2 \
+        --min-split-size=1M \
+        --auto-file-renaming=false \
+        --allow-overwrite=true \
+        --max-tries=5 \
+        --retry-wait=2
+
+    find /srv/repo -name '*.sha256' -exec cat '{}' + | sha256sum -c -w --strict --quiet
     rm -rf "${ARCH_TMP}"
 
     mkdir -p "dists/trixie/openresty/binary-${arch}"
