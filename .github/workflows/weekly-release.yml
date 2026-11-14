@@ -1,0 +1,246 @@
+name: Weekly OpenResty Trixie Repo Release
+
+on:
+  schedule:
+    - cron: '0 19 * * 2'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  prepare-key:
+    runs-on: ubuntu-slim
+    outputs:
+      gpg-private-key: ${{ steps.keygen.outputs.private_key }}
+      release-tag: ${{ steps.meta.outputs.tag }}
+    steps:
+      - name: Set weekly release tag
+        id: meta
+        run: echo "tag=v$(date -u +%Y.%m.%d)" >> "${GITHUB_OUTPUT}"
+
+      - name: Generate ephemeral RSA 3072 GPG keypair and fetch upstream key
+        id: keygen
+        run: |
+          set -euo pipefail
+          WORK_DIR="$(mktemp -d)"
+          trap 'rm -rf "${WORK_DIR}"' EXIT
+
+          export GNUPGHOME="${WORK_DIR}/gnupg"
+          mkdir -m 0700 "${GNUPGHOME}"
+
+          OUT_DIR="$(mktemp -d "${RUNNER_TEMP}/keys.XXXXXX")"
+          echo "out_dir=${OUT_DIR}" >> "${GITHUB_OUTPUT}"
+
+          # Expiration set to '0' (never expires) so archived releases remain valid in the future
+          gpg --batch --passphrase '' \
+            --quick-generate-key "OpenResty Trixie Mirror (${{ steps.meta.outputs.tag }}) <repo@localhost>" \
+            rsa3072 sign 0
+
+          # 1. Raw armored mirror public key (directly usable in APT Signed-By:)
+          gpg --batch --armor --export > "${OUT_DIR}/openresty-mirror.asc"
+
+          # 2. Fetch the current upstream OpenResty public key
+          BASE_URL='https://openresty.org'
+          KEY_PATH='/package/pubkey.gpg'
+          curl -fsSL "${BASE_URL}${KEY_PATH}" -o "${OUT_DIR}/openresty-upstream.asc"
+          test -s "${OUT_DIR}/openresty-upstream.asc"
+
+          # 3. Combine both armored public key blocks and clearsign with our mirror key
+          {
+            printf '# OpenResty Trixie Mirror Public Key (%s)\n' "${{ steps.meta.outputs.tag }}"
+            cat "${OUT_DIR}/openresty-mirror.asc"
+            printf '\n# Upstream OpenResty Public Key\n'
+            cat "${OUT_DIR}/openresty-upstream.asc"
+          } > "${WORK_DIR}/combined-keys.txt"
+
+          gpg --batch --yes --clearsign \
+            -o "${OUT_DIR}/openresty-keys.clearsigned.asc" \
+            "${WORK_DIR}/combined-keys.txt"
+
+          KEY_ARMOR="$(gpg --batch --armor --export-secret-keys)"
+          {
+            echo "private_key<<EOF_GPG_KEY"
+            echo "${KEY_ARMOR}"
+            echo "EOF_GPG_KEY"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Upload keyring artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: openresty-mirror-keys
+          path: |
+            ${{ steps.keygen.outputs.out_dir }}/openresty-mirror.asc
+            ${{ steps.keygen.outputs.out_dir }}/openresty-upstream.asc
+            ${{ steps.keygen.outputs.out_dir }}/openresty-keys.clearsigned.asc
+          if-no-files-found: error
+          retention-days: 1
+
+  build:
+    needs: prepare-key
+    uses: docker/github-builder/.github/workflows/build.yml@v1
+    permissions:
+      contents: read
+    with:
+      context: ./docker
+      # file: ./docker/Dockerfile
+      output: image
+      push: false
+      export-image: true
+      platforms: linux/amd64,linux/arm64
+      meta-images: openresty-trixie-repo
+      meta-tags: |
+        type=raw,value=${{ needs.prepare-key.outputs.release-tag }}
+      build-contexts: |
+        keys=${{ runner.temp }}/keys-context
+      pre-steps: |
+        - name: Download keyring context
+          uses: actions/download-artifact@v4
+          with:
+            name: openresty-mirror-keys
+            path: ${{ runner.temp }}/keys-context
+    secrets:
+      secrets: |
+        apt_signing_key=${{ needs.prepare-key.outputs.gpg-private-key }}
+
+  publish-release:
+    needs: [prepare-key, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Prepare temporary staging directory
+        id: stage
+        run: |
+          ASSETS_DIR="$(mktemp -d "${RUNNER_TEMP}/release-assets.XXXXXX")"
+          echo "assets_dir=${ASSETS_DIR}" >> "${GITHUB_OUTPUT}"
+
+      - name: Download keyring artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: openresty-mirror-keys
+          path: ${{ steps.stage.outputs.assets_dir }}
+
+      - name: Download exported Docker image artifact
+        uses: actions/download-artifact@v4
+        with:
+          pattern: '*image*'
+          merge-multiple: true
+          path: ${{ steps.stage.outputs.assets_dir }}
+
+      - name: Checksum (tagged format), compress with zstd, and sign checksums
+        env:
+          GPG_PRIVATE_KEY: ${{ needs.prepare-key.outputs.gpg-private-key }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+
+          WORK_DIR="$(mktemp -d)"
+          trap 'rm -rf "${WORK_DIR}"' EXIT
+          export GNUPGHOME="${WORK_DIR}/gnupg"
+          mkdir -m 0700 "${GNUPGHOME}"
+
+          printf '%s\n' "${GPG_PRIVATE_KEY}" | gpg --batch --import
+          FPR="$(gpg --batch --list-secret-keys --with-colons | awk -F: '/^fpr:/ {print $10; exit}')"
+
+          cd '${{ steps.stage.outputs.assets_dir }}'
+          for tarfile in *.tar; do
+            # 1. Tagged SHA-256 checksum of uncompressed .tar and detached signature
+            sha256sum --tag "${tarfile}" > "${tarfile}.sha256"
+            gpg --batch --yes --default-key "${FPR}" \
+              --detach-sign --armor -o "${tarfile}.sha256.asc" "${tarfile}.sha256"
+
+            # 2. Compress with multi-threaded zstd (removes original .tar)
+            zstd -T0 -19 --rm "${tarfile}"
+
+            # 3. Tagged SHA-256 checksum of compressed .tar.zst and detached signature
+            zstfile="${tarfile}.zst"
+            sha256sum --tag "${zstfile}" > "${zstfile}.sha256"
+            gpg --batch --yes --default-key "${FPR}" \
+              --detach-sign --armor -o "${zstfile}.sha256.asc" "${zstfile}.sha256"
+          done
+          ls -lh
+
+      - name: Verify signatures, load image, and test APT Trixie client
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+
+          WORK_DIR="$(mktemp -d)"
+          trap 'rm -rf "${WORK_DIR}"; docker rm -f openresty-repo-test >/dev/null 2>&1 || true; docker network rm openresty-test-net >/dev/null 2>&1 || true' EXIT
+
+          export GNUPGHOME="${WORK_DIR}/gnupg"
+          mkdir -m 0700 "${GNUPGHOME}"
+
+          cd '${{ steps.stage.outputs.assets_dir }}'
+          gpg --batch --import openresty-mirror.asc
+          gpg --batch --decrypt openresty-keys.clearsigned.asc >/dev/null
+
+          zstfiles=(*.tar.zst)
+          test "${#zstfiles[@]}" -eq 1
+          zstfile="${zstfiles[0]}"
+          tarfile="${zstfile%.zst}"
+
+          # 1. Verify signed .tar.zst checksum and check digest
+          gpg --batch --verify "${zstfile}.sha256.asc" "${zstfile}.sha256"
+          sha256sum -c "${zstfile}.sha256"
+
+          # 2. Verify signed .tar checksum, decompress to temp dir, check digest, and load image
+          gpg --batch --verify "${tarfile}.sha256.asc" "${tarfile}.sha256"
+          zstd -d -c "${zstfile}" > "${WORK_DIR}/${tarfile}"
+          (
+            cd "${WORK_DIR}"
+            sha256sum -c "${OLDPWD}/${tarfile}.sha256"
+          )
+
+          LOADED_IMAGE="$(docker load -i "${WORK_DIR}/${tarfile}" | awk '/Loaded image/ {print $NF; exit}')"
+          test -n "${LOADED_IMAGE}"
+          rm -f "${WORK_DIR}/${tarfile}"
+
+          # 3. Run the repository container on a custom bind/port and test a Trixie client against it
+          docker network create openresty-test-net >/dev/null
+          docker run -d \
+            --name openresty-repo-test \
+            --network openresty-test-net \
+            "${LOADED_IMAGE}" --bind 0.0.0.0 8090 >/dev/null
+
+          docker run --rm \
+            --network openresty-test-net \
+            -v "${PWD}/openresty-mirror.asc:/etc/apt/keyrings/openresty-mirror.asc:ro" \
+            python:3.15-slim-trixie \
+            sh -euxc '
+              cat <<EOF > /etc/apt/sources.list.d/openresty.sources
+          Types: deb
+          URIs: http://openresty-repo-test:8090
+          Suites: trixie
+          Components: openresty
+          Signed-By: /etc/apt/keyrings/openresty-mirror.asc
+          EOF
+              apt-get update
+              apt-cache policy openresty | grep -q "http://openresty-repo-test:8090 trixie/openresty"
+            '
+
+      - name: Create draft release and publish as immutable
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG='${{ needs.prepare-key.outputs.release-tag }}'
+          ASSETS_DIR='${{ steps.stage.outputs.assets_dir }}'
+          NOTES=$(cat <<'EOF'
+          Self-contained OpenResty APT repository image for Debian Trixie (`amd64` + `arm64`) compressed with `zstd`, alongside:
+          - `openresty-mirror.asc` — Ephemeral RSA 3072 public signing key for APT `Signed-By:`
+          - `openresty-upstream.asc` — Upstream OpenResty public key used to verify origin packages at build time
+          - `openresty-keys.clearsigned.asc` — Clearsigned bundle containing both the mirror and upstream armored public key blocks
+          - Tagged SHA-256 checksums (`*.sha256`) and detached GPG signatures (`*.sha256.asc`) for both the `.tar` and `.tar.zst` image archives
+          EOF
+          )
+
+          # 1. Create as --draft so assets can be uploaded before immutability locks the release
+          gh release create "${TAG}" \
+            "${ASSETS_DIR}"/* \
+            --draft \
+            --target "${GITHUB_SHA}" \
+            --title "OpenResty Trixie Snapshot (${TAG})" \
+            --notes "${NOTES}"
+
+          # 2. Publish the release (locks tag and assets when Immutable Releases is enabled)
+          gh release edit "${TAG}" --draft=false
