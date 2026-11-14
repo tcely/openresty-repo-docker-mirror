@@ -1,4 +1,6 @@
 **
 !Dockerfile
+!Dockerfile.from-artifact
 !build.sh
 !openresty-upstream.asc
+!repo-artifact.tar
