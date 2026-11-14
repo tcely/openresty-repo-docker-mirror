@@ -15,6 +15,7 @@ FPR="$(gpg --batch --list-secret-keys --with-colons | awk -F: '/^fpr:/ {print $1
 CONTEXT_FPR="$(gpg --batch --with-colons --import-options show-only --import \
     /etc/apt/keyrings/openresty-mirror.asc | awk -F: '/^fpr:/ {print $10; exit}')"
 test "${FPR}" = "${CONTEXT_FPR}"
+gpg --batch --dearmor -o "${WORK_DIR}/openresty-upstream.gpg" /etc/apt/keyrings/openresty-upstream.asc
 
 BASE_URL='https://openresty.org'
 
@@ -35,9 +36,9 @@ do
     wget -q -O "${ARCH_TMP}/Release" "${UPSTREAM}/dists/bookworm/Release" &
     dl=$!
     wget -q -O "${ARCH_TMP}/Release.gpg" "${UPSTREAM}/dists/bookworm/Release.gpg"
-    
+ 
     wait "${dl}"
-    gpgv --keyring /etc/apt/keyrings/openresty-upstream.asc \
+    gpgv --keyring "${WORK_DIR}/openresty-upstream.gpg" \
         "${ARCH_TMP}/Release.gpg" "${ARCH_TMP}/Release"
 
     PKG_REL="openresty/binary-${arch}/Packages.gz"
