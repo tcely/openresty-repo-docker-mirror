@@ -49,6 +49,7 @@ jobs:
     uses: docker/github-builder/.github/workflows/build.yml@v1
     permissions:
       contents: read
+      id-token: write
     with:
       context: ./docker
       # file: Dockerfile
