@@ -1,9 +1,6 @@
 name: Weekly Release
 
 on:
-  push:
-    branches:
-      - 'tcely-patch-1'
   schedule:
     # Runs every Sunday at 04:00 UTC
     - cron: '3 18 * * 2'
@@ -26,14 +23,14 @@ jobs:
       - name: Set weekly release tag
         id: meta
         shell: 'bash'
-        run: echo "tag=v$(date -u +%Y.%m.%d)" >> "${GITHUB_OUTPUT}"
+        run: printf 'tag=v%s\n' "$(date -u +%Y.%m.%d)" >> "${GITHUB_OUTPUT}"
 
       - name: Generate ephemeral RSA 3072 GPG keypair and fetch upstream key
         id: keygen
         shell: 'bash'
         env:
           RELEASE_TAG: ${{ steps.meta.outputs.tag }}
-        run: bash ./scripts/prepare-keys.sh
+        run: ./scripts/prepare-keys.sh
 
       - name: Upload keyring artifacts
         uses: actions/upload-artifact@v7
@@ -82,8 +79,8 @@ jobs:
         id: stage
         shell: 'bash'
         run: |
-          echo "assets_dir=$(mktemp -d "${RUNNER_TEMP}/release-assets.XXXXXX")" >> "${GITHUB_OUTPUT}"
-          echo "rootfs_dir=$(mktemp -d "${RUNNER_TEMP}/rootfs.XXXXXX")" >> "${GITHUB_OUTPUT}"
+          echo "assets_dir=$(mktemp -d 'release-assets.XXXXXX')" >> "${GITHUB_OUTPUT}"
+          echo "rootfs_dir=$(mktemp -d 'rootfs.XXXXXX')" >> "${GITHUB_OUTPUT}"
 
       - name: Download keyring artifacts
         uses: actions/download-artifact@v8
@@ -106,4 +103,4 @@ jobs:
           RELEASE_TAG: ${{ needs.prepare-key.outputs.release-tag }}
           ASSETS_DIR: ${{ steps.stage.outputs.assets_dir }}
           ROOTFS_DIR: ${{ steps.stage.outputs.rootfs_dir }}
-        run: bash ./scripts/publish-release.sh
+        run: ./scripts/publish-release.sh
