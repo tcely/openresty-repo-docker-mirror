@@ -2,5 +2,6 @@
 !Dockerfile
 !Dockerfile.from-artifact
 !build.sh
+!download-verify-age.py
 !openresty-upstream.asc
 !repo-artifact.tar
