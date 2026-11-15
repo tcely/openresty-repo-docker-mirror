@@ -2,61 +2,134 @@ name: Rotate age transport key
 
 on:
   schedule:
-    # Monthly, at a time chosen to avoid the weekly release window.
+    # First day of each month at 05:23 UTC; keep clear of the weekly release window.
     - cron: "23 5 1 * *"
   workflow_dispatch:
 
-# The workflow uses the PAT, not GITHUB_TOKEN.
-permissions: {}
+# Checkout needs read access. The PAT supplies the write access for rotation.
+permissions:
+  contents: read
 
 concurrency:
-  group: age-key-rotation
+  group: age-key-cutover
   cancel-in-progress: false
 
 jobs:
   rotate:
-    # Do not expose the PAT to a manually dispatched run from another branch.
+    # Prevent a manually dispatched run from another branch accessing the PAT.
     if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
+    timeout-minutes: 5
 
     steps:
-      - name: Install age
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes age
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
-      - name: Generate, test, and store new age identity
-        shell: bash
+      - name: Download and verify age
+        shell: 'bash'
+        run: |
+          set -euo pipefail
+
+          python3 scripts/download-verify-age.py \
+            --version 1.3.2 \
+            --sha256 cbe24006683f8eb669266162894b9a522a1af52f2665fbc63a4bb032ed26ac10 \
+            --output "${RUNNER_TEMP}/age.tar.gz"
+
+      - name: Extract age
+        shell: 'bash'
+        run: |
+          set -euo pipefail
+
+          extract_dir="${RUNNER_TEMP}/age-extract"
+          bin_dir="${RUNNER_TEMP}/age-bin"
+
+          mkdir -p "${extract_dir}" "${bin_dir}"
+          tar -C "${extract_dir}" -xvpf "${RUNNER_TEMP}/age.tar.gz"
+          rm -v "${RUNNER_TEMP}/age.tar.gz"
+          install -m 0755 "${extract_dir}/age/age" "${bin_dir}/age"
+          install -m 0755 "${extract_dir}/age/age-keygen" "${bin_dir}/age-keygen"
+          rm -v -r "${extract_dir}"
+          echo "${bin_dir}" >> "${GITHUB_PATH}"
+
+      - name: Generate, test, and stage candidate
+        id: stage
+        shell: 'bash'
         env:
           GH_TOKEN: ${{ secrets.AGE_ROTATION_PAT }}
+          REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
           umask 077
 
+          # The PAT needs Secrets: write and Variables: write.
           : "${GH_TOKEN:?AGE_ROTATION_PAT repository secret is missing}"
 
-          identity_file="$RUNNER_TEMP/age-identity"
-          recipient_file="$RUNNER_TEMP/age-recipient"
-          plaintext_file="$RUNNER_TEMP/age-test-plaintext"
-          ciphertext_file="$RUNNER_TEMP/age-test-ciphertext"
-          decrypted_file="$RUNNER_TEMP/age-test-decrypted"
+          active_month="$(gh variable get AGE_KEY_MONTH --repo "${REPOSITORY}")"
+          pending_month="$(gh variable get AGE_KEY_PENDING_MONTH --repo "${REPOSITORY}" 2>/dev/null || true)"
+          target_month="$(date -u +%m)"
 
-          trap 'rm -f "$identity_file" "$recipient_file" \
-            "$plaintext_file" "$ciphertext_file" "$decrypted_file"' EXIT
+          if [[ 0 && ! "${active_month}" =~ ^(0[1-9]|1[0-2])$ ]]; then
+            echo "::error::AGE_KEY_MONTH must be set to a month from 01 through 12."
+            exit 1
+          fi
 
-          age-keygen -o "$identity_file"
-          age-keygen -y "$identity_file" > "$recipient_file"
+          if [[ 0 && -n "${pending_month}" ]]; then
+            echo "::error::AGE_KEY_PENDING_MONTH is already set to '${pending_month}'. Verify or clear that staged rotation before starting another."
+            exit 1
+          fi
 
-          # Check that this identity and recipient match before storing either.
-          printf 'age rotation test\n' > "$plaintext_file"
-          age -r "$(cat "$recipient_file")" \
-            -o "$ciphertext_file" "$plaintext_file"
-          age -d -i "$identity_file" \
-            -o "$decrypted_file" "$ciphertext_file"
-          cmp "$plaintext_file" "$decrypted_file"
+          # Never overwrite the active pair. This can occur when a delayed
+          # rotation's calendar month matches the active slot.
+          if [[ "${target_month}" == "${active_month}" ]]; then
+            echo "Active slot is already ${target_month}; skipping to protect it."
+            echo "staged=false" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
 
-          # These are separate updates. Run rotation when no release is active.
-          gh secret set AGE_IDENTITY \
-            --repo "$GITHUB_REPOSITORY" < "$identity_file"
-          gh variable set AGE_RECIPIENT \
-            --repo "$GITHUB_REPOSITORY" < "$recipient_file"
+          work_dir="$(mktemp -d)"
+          cleanup() {
+            rm -r -f "${work_dir}"
+          }
+          trap cleanup EXIT
+          chmod 00700 "${work_dir}"
+
+          identity="${work_dir}/age-identity"
+          recipient="${work_dir}/age-recipient"
+          plaintext="${work_dir}/age-test-plaintext"
+          ciphertext="${work_dir}/age-test-ciphertext"
+          decrypted="${work_dir}/age-test-decrypted"
+
+          age-keygen -o "${identity}" >/dev/null
+          age-keygen -y "${identity}" > "${recipient}"
+
+          printf 'age key rotation test\n' > "${plaintext}"
+          age -r "$(< "${recipient}")" -o "${ciphertext}" "${plaintext}"
+          age -d -i "${identity}" -o "${decrypted}" "${ciphertext}"
+          cmp "${plaintext}" "${decrypted}"
+
+          identity_name="AGE_IDENTITY_${target_month}"
+          recipient_name="AGE_RECIPIENT_${target_month}"
+
+          # Stage the secret and recipient before setting the pending marker.
+          gh secret set "${identity_name}" --repo "${REPOSITORY}" < "${identity}"
+          gh variable set "${recipient_name}" --repo "${REPOSITORY}" --body "$(< "${recipient}")"
+          gh variable set AGE_KEY_PENDING_MONTH --repo "${REPOSITORY}" --body "${target_month}"
+
+          # The artifact identifies this candidate and its rollback slot.
+          # It contains no secret or private-key material.
+          mkdir -p "${RUNNER_TEMP}/age-pending"
+          printf '%s\n' "${target_month}" > "${RUNNER_TEMP}/age-pending/month"
+          printf '%s\n' "${active_month}" > "${RUNNER_TEMP}/age-pending/previous-month"
+
+          echo "staged=true" >> "${GITHUB_OUTPUT}"
+
+      - name: Upload candidate version marker
+        if: steps.stage.outputs.staged == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: age-pending-month
+          path: ${{ runner.temp }}/age-pending/
+          if-no-files-found: error
+          retention-days: 7
