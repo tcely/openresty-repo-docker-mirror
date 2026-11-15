@@ -2,12 +2,14 @@ name: Rotate age transport key
 
 on:
   schedule:
-    # Monthly, at a time chosen to avoid the weekly release window.
+    # First day of each month at 05:23 UTC.
+    # Adjust this to avoid the weekly release window.
     - cron: "23 5 1 * *"
   workflow_dispatch:
 
-# The workflow uses the PAT, not GITHUB_TOKEN.
-permissions: {}
+# Checkout needs read access. The PAT supplies the write access for rotation.
+permissions:
+  contents: read
 
 concurrency:
   group: age-key-rotation
@@ -15,18 +17,44 @@ concurrency:
 
 jobs:
   rotate:
-    # Do not expose the PAT to a manually dispatched run from another branch.
+    # Prevent a manually dispatched run from another branch accessing the PAT.
     if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
 
     steps:
-      - name: Install age
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes age
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
-      - name: Generate, test, and store new age identity
-        shell: bash
+      - name: Download and verify age
+        shell: 'bash'
+        run: |
+          set -euo pipefail
+
+          python3 scripts/download-verify-age.py \
+            --version 1.3.2 \
+            --sha256 cbe24006683f8eb669266162894b9a522a1af52f2665fbc63a4bb032ed26ac10 \
+            --output "${RUNNER_TEMP}/age.tar.gz"
+
+      - name: Extract age
+        shell: 'bash'
+        run: |
+          set -euo pipefail
+
+          extract_dir="${RUNNER_TEMP}/age-extract"
+          bin_dir="${RUNNER_TEMP}/age-bin"
+
+          mkdir -p "${extract_dir}" "${bin_dir}"
+          tar -C "${extract_dir}" -xvpf "${RUNNER_TEMP}/age.tar.gz"
+          rm -v "${RUNNER_TEMP}/age.tar.gz"
+          install -m 0755 "${extract_dir}/age/age" "${bin_dir}/age"
+          install -m 0755 "${extract_dir}/age/age-keygen" "${bin_dir}/age-keygen"
+          rm -v -r "${extract_dir}"
+          echo "${bin_dir}" >> "${GITHUB_PATH}"
+
+      - name: Generate, test, and store age identity
+        shell: 'bash'
         env:
           GH_TOKEN: ${{ secrets.AGE_ROTATION_PAT }}
         run: |
@@ -35,28 +63,28 @@ jobs:
 
           : "${GH_TOKEN:?AGE_ROTATION_PAT repository secret is missing}"
 
-          identity_file="$RUNNER_TEMP/age-identity"
-          recipient_file="$RUNNER_TEMP/age-recipient"
-          plaintext_file="$RUNNER_TEMP/age-test-plaintext"
-          ciphertext_file="$RUNNER_TEMP/age-test-ciphertext"
-          decrypted_file="$RUNNER_TEMP/age-test-decrypted"
+          identity_file="${RUNNER_TEMP}/age-identity"
+          recipient_file="${RUNNER_TEMP}/age-recipient"
+          plaintext_file="${RUNNER_TEMP}/age-test-plaintext"
+          ciphertext_file="${RUNNER_TEMP}/age-test-ciphertext"
+          decrypted_file="${RUNNER_TEMP}/age-test-decrypted"
 
-          trap 'rm -f "$identity_file" "$recipient_file" \
-            "$plaintext_file" "$ciphertext_file" "$decrypted_file"' EXIT
+          trap 'rm -f "${identity_file}" "${recipient_file}" \
+            "${plaintext_file}" "${ciphertext_file}" "${decrypted_file}"' EXIT
 
-          age-keygen -o "$identity_file"
-          age-keygen -y "$identity_file" > "$recipient_file"
+          age-keygen -o "${identity_file}" >/dev/null
+          age-keygen -y "${identity_file}" > "${recipient_file}"
 
-          # Check that this identity and recipient match before storing either.
-          printf 'age rotation test\n' > "$plaintext_file"
-          age -r "$(cat "$recipient_file")" \
-            -o "$ciphertext_file" "$plaintext_file"
-          age -d -i "$identity_file" \
-            -o "$decrypted_file" "$ciphertext_file"
-          cmp "$plaintext_file" "$decrypted_file"
+          # Confirm the newly generated identity matches its recipient.
+          printf 'age rotation test\n' > "${plaintext_file}"
+          age -r "$(cat "${recipient_file}")" \
+            -o "${ciphertext_file}" "${plaintext_file}"
+          age -d -i "${identity_file}" \
+            -o "${decrypted_file}" "${ciphertext_file}"
+          cmp "${plaintext_file}" "${decrypted_file}"
 
-          # These are separate updates. Run rotation when no release is active.
+          # The PAT needs Secrets: write and Variables: write.
           gh secret set AGE_IDENTITY \
-            --repo "$GITHUB_REPOSITORY" < "$identity_file"
+            --repo "${GITHUB_REPOSITORY}" < "${identity_file}"
           gh variable set AGE_RECIPIENT \
-            --repo "$GITHUB_REPOSITORY" < "$recipient_file"
+            --repo "${GITHUB_REPOSITORY}" < "${recipient_file}"
