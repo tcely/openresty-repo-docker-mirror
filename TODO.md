@@ -1,27 +1,9 @@
-# TODO: Align README with implementation
+# TODO
 
-## Verify before rewriting
-- [ ] Confirm `scripts/prepare-keys.sh` writes `openresty-keys.clearsigned.asc` and the `.asc` files to the paths the workflow uploads.
-- [ ] Confirm `scripts/publish-release.sh` ships `.tar.zst`, `.sha256`, and `.sha256.asc` and does not ship the `.tar` files.
-- [ ] Confirm `docker/Dockerfile` matches the stage order described in the workflow (`repo-builder` → `artifact-builder` → `artifact` → `final`).
-- [ ] Check the mirror's `Packages` indexes with the `Filename:`/`Architecture:` grep against a built snapshot.
+## Pending
 
-## Security
-- [ ] Move the signing key out of job outputs: generate and sign in one job, or store it as a secret and pass only what each job needs.
-- [ ] Decide whether the README's "ephemeral key" claim still holds after that change.
+- [ ] **Fix `publish-release.sh` clearsigned bundle check.** Replace `gpg --decrypt` with `gpg --verify` for `openresty-keys.clearsigned.asc`. The README already documents `--verify`.
+- [ ] **Extend `.gitignore`.** Add `*.tar`, `*.tar.zst`, `*.sha256`, `*.sha256.asc`, `*.url`, `*.key`, `*.sec`, `*.gpg`, `/dists/`, `/pool/`, and `/gnupg/`. Keep the existing `docker/openresty-*.asc` and `docker/*.tar` entries.
+- [ ] **Fix absolute paths in pool checksums.** `build.sh` writes `.sha256` files with absolute build-container paths (`/srv/repo/pool/...`). Rewrite them as relative paths so they verify from the pool directory. Update the README's "Files Shipped in the Pool" section when this is done.
+- [ ] **Move the signing key out of GitHub job outputs.** The private key currently passes from `prepare-key` to `build` (as the `apt_signing_key` secret) and to `publish-release` (as the `GPG_PRIVATE_KEY` environment variable). Generate and use it in a single job, or store it as a secure secret. Update the README's "Build Pipeline" section when this is done.
 
-## Repository hygiene
-- [ ] Extend `.gitignore` with release artifacts (`*.tar`, `*.tar.zst`, `*.sha256`, `*.sha256.asc`, `*.url`) and key patterns (`*.key`, `*.sec`, `*.gpg`).
-- [ ] Confirm where the clearsigned bundle is written, since the `docker/` pattern won't match if it lands in the repo root.
-
-## Mirror metadata
-- [ ] Decide whether to add `Valid-Until` to the `Release` file or document that snapshots have no freshness guarantee.
-- [ ] Decide whether `.sha256` and `.url` files under `pool/` should be published or removed after verification.
-
-## README rewrite
-- [ ] Document the bookworm → trixie relabeling.
-- [ ] State that the upstream key is fetched per run without a pinned fingerprint.
-- [ ] State that the mirror is served over plain HTTP.
-- [ ] Correct "rejecting" CR/NUL to "stripping" `\r`.
-- [ ] Document the two-stage build (`artifact` target, then `Dockerfile.from-artifact`).
-- [ ] Note that only `amd64` is runtime-tested.
