@@ -54,7 +54,7 @@ runs:
       run: |
         set -euo pipefail
 
-        python3 scripts/download-verify-age.py \
+        python3 docker/download-verify-age.py \
             --version "${INPUT_VERSION}" \
             --sha256 "${INPUT_CHECKSUM}" \
             --output "${work_dir}/age.tar.gz"
