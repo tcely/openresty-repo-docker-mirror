@@ -24,11 +24,11 @@ Releases are immutable. Once published, their assets cannot be changed.
 
 ## Build Pipeline
 
-The workflow `.github/workflows/weekly-release.yml` runs on a weekly cron (`3 18 * * 2`) and executes three jobs in order.
+The workflow `.github/workflows/weekly-release.yml` runs on a weekly cron (`3 18 * * 2`). It can also be started manually with `workflow_dispatch`. It executes three jobs in order.
 
-1. **`prepare-key`** runs `scripts/prepare-keys.sh` on `ubuntu-slim`. It generates an RSA 3072 sign-only key with no expiration in a temporary `GNUPGHOME`, fetches the upstream key from `https://openresty.org/package/pubkey.gpg`, and creates the clearsigned bundle `openresty-keys.clearsigned.asc`. It exports the private key, mirror public key, and upstream public key as job outputs, which are passed to later jobs. The three key files are also uploaded as a workflow artifact.
-2. **`build`** calls the reusable `docker/github-builder` workflow with `target: 'artifact'`, `output: local`, and `platforms: linux/amd64,linux/arm64`. The private signing key is passed to the build as the `apt_signing_key` BuildKit secret.
-3. **`publish-release`** runs `scripts/publish-release.sh` on `ubuntu-latest`. It builds the release images, runs the smoke test, compresses and checksums the archives, signs them, and verifies them. It then creates a draft release, uploads the assets, and publishes the release, which makes it immutable.
+1. **`prepare-key`** runs on `ubuntu-slim`. It runs `scripts/prepare-keys.sh`, which generates an RSA 3072 sign-only key with no expiration in a temporary `GNUPGHOME`, fetches the upstream key from `https://openresty.org/package/pubkey.gpg`, and creates the clearsigned bundle `openresty-keys.clearsigned.asc`. It exports the private key, mirror public key, and upstream public key as job outputs, which are passed to later jobs. The three key files are also uploaded as a workflow artifact.
+2. **`build`** calls the reusable `docker/github-builder` workflow with `target: 'artifact'`, `output: local`, and `platforms: linux/amd64,linux/arm64`. The private signing key and both public keys are passed to the build as the BuildKit secrets `apt_signing_key`, `openresty_mirror_pub`, and `openresty_upstream_pub`.
+3. **`publish-release`** runs on `ubuntu-latest`. It runs `scripts/publish-release.sh`, which packages each architecture's archive, compresses it, creates checksums and signatures, verifies them, runs the smoke test on `amd64`, creates a draft release, and then publishes it.
 
 ### Build Paths
 
@@ -36,13 +36,13 @@ Both Dockerfile targets produce the same final image. The release workflow uses 
 
 The `artifact` target of `docker/Dockerfile` contains only `/repo-artifact.tar`, a tarball of `etc/apt` and `srv` produced by the `artifact-builder` stage. `scripts/publish-release.sh` copies that tarball into `docker/` and builds the release image with `docker/Dockerfile.from-artifact`. This is the path used for every published release.
 
-The `final` target of `docker/Dockerfile` builds directly from `repo-builder` without the tarball. It is the direct path to the same image and is used for local builds.
+The `final` target of `docker/Dockerfile` copies the keys and `/srv/repo` from the `repo-builder` stage. It is the direct path to the same image and is used for local builds.
 
 Both images run as `65534:65534`, expose port 8080, declare `VOLUME ["/srv/repo"]`, and start with `ENTRYPOINT ["python3", "-m", "http.server", "--directory", "/srv/repo"]`.
 
 ### Smoke Test
 
-Before a release is created, `publish-release.sh` loads the `amd64` image and runs it on port 8090 using `python:3.15-slim-trixie`. The smoke test runs `apt-get update` against the repository configuration in the image, which confirms that the signed index, the keys, and the source configuration work together. Only `amd64` is tested.
+Before a release is created, `publish-release.sh` loads the `amd64` image and runs it on port 8090 using `python:3.15-slim-trixie`. The test client writes its own APT source file that points at the running mirror, mounts `openresty-mirror.asc` from the release assets as its keyring, and runs `apt-get update` and `apt-cache policy openresty`. This confirms that the served index, the signing key, and the source configuration work together. Only `amd64` is loaded and tested.
 
 ---
 
@@ -50,7 +50,7 @@ Before a release is created, `publish-release.sh` loads the `amd64` image and ru
 
 ### Upstream Fetch and Verification
 
-`docker/build.sh` imports the `apt_signing_key` secret and fetches the **`bookworm`** repository from `openresty.org` for both architectures. It verifies upstream `Release.gpg` against the upstream key, then writes the output under **`trixie`**, setting `Suites: trixie` and `Codename: trixie` in the new `Release` file. **The packages are built for bookworm and served as trixie. This relabeling is the only change the mirror makes to the upstream packages.**
+`docker/build.sh` fetches the **`bookworm`** repository from `openresty.org` for both architectures over TLS 1.2 or later. It verifies upstream `Release.gpg` with `gpgv` against the upstream key stored in the build context. It then writes the output under **`trixie`**, setting `Suites: trixie` and `Codename: trixie` in the new `Release` file. **The packages are built for bookworm and served as trixie. This relabeling is the only change the mirror makes to the upstream packages.**
 
 The upstream key is **trust-on-first-use**. It is fetched from `openresty.org` on each workflow run, and the build verifies against that copy with no pinned fingerprint.
 
@@ -154,7 +154,7 @@ Replace `<host>` with the address of the machine running the container.
 
 ## Building Locally
 
-To build the `final` target directly, provide the three secrets that the release workflow uses:
+To build the `final` target directly, supply the three secrets that the release workflow uses:
 
 ```sh
 docker buildx build \
@@ -166,16 +166,17 @@ docker buildx build \
   ./docker
 ```
 
-A local build creates its own signing key, so its `Release` signatures will not match a published release.
+A local build uses the signing key you supply. The build fails unless that key matches the mirror public key in the build context. A local build's signatures will not match a published release.
 
 ---
 
 ## Known Limitations
 
-- **Only `amd64` is runtime-tested.** The smoke test loads and runs only the `amd64` image. The `arm64` image is built but not run.
+- **Only `amd64` is runtime-tested.** The smoke test loads and runs only the `amd64` image. The `arm64` archives are checked for signatures and checksums before publishing, but are not loaded or run.
 - **The mirror is served over HTTP**, so the APT signature check is the only integrity guarantee.
 - **The upstream key is trust-on-first-use.** It is fetched on each workflow run without a pinned fingerprint.
 - **Each release has a new signing key.** Clients must use the key from the same release.
 - **The `Release` file has no `Valid-Until`**, so snapshots never expire.
 - **NUL bytes in upstream `Packages` metadata are not handled.** Only `\r` is stripped.
 - **Bookworm packages are served as trixie.** The packages are not rebuilt, so compatibility depends on the upstream packages.
+
