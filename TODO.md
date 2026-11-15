@@ -17,9 +17,6 @@
 - [ ] **Decide the signing-key design.** Choose between generating and using the key in a single job or storing it as a secure secret. The key-handling fix depends on this choice.
   - Suggested fix: recommend the single-job approach above. It removes the key from job outputs and needs no long-lived secret. Record the decision here before implementing the job-output change.
 
-- [ ] **Pin the upstream OpenResty key fingerprint.** `prepare-keys.sh` downloads `openresty-upstream.asc` from `https://openresty.org/package/pubkey.gpg` and does not check it against a known fingerprint. Update the README's trust-on-first-use note when this is done.
-  - Suggested fix: commit the expected fingerprint to the repo (for example `scripts/openresty-upstream.fpr`). After download, run `gpg --with-colons --import-options show-only --import` on the file and compare the primary fingerprint to the committed value. Fail the job on mismatch. Update the fingerprint deliberately when OpenResty rotates its key.
-
 - [ ] **Add prerequisites to the README verification section.** The verification script needs `gpg`, `zstd`, `sha256sum`, and `docker` on the host. List them before the script.
   - Suggested fix: add a short bulleted list above the verification block, such as "You need `gpg`, `zstd`, `sha256sum` (coreutils), and `docker` installed."
 
@@ -35,3 +32,7 @@
 ## Done
 
 - [x] **Confirm the `prepare-key` artifact contains no private key.** The upload lists three explicit files. `openresty-mirror.asc` is written with `gpg --armor --export`, which exports public keys only, and the clearsigned bundle is built from public key blocks. The private key leaves the job only as the `gpg-private-key` output, which is covered separately.
+
+## Won't Do
+
+- **Pin the upstream OpenResty key fingerprint.** Trust-on-first-use is intentional. The README documents the trade-off.
