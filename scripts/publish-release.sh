@@ -47,6 +47,8 @@ printf '%s\n' 'docker buildx build'
 docker buildx build --help || :
 printf '%s\n' '' ''
 
+ls -al "${ROOTFS_DIR}" || :
+ls -al "${ROOTFS_DIR}"/* || :
 # Package each architecture rootfs into a Docker tar archive, checksum, compress, and sign.
 for arch in amd64 arm64; do
     SRC_DIR="${ROOTFS_DIR}/linux_${arch}"
