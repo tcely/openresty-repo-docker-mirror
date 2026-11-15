@@ -70,7 +70,7 @@ jobs:
           pending_month="$(gh variable get AGE_KEY_PENDING_MONTH --repo "${REPOSITORY}" 2>/dev/null || true)"
           target_month="$(date -u +%m)"
 
-          if [[ 0 && ! "${active_month}" =~ ^(0[1-9]|1[0-2])$ ]]; then
+          if [[ ! "${active_month}" =~ ^(0[1-9]|1[0-2])$ ]]; then
             echo "::error::AGE_KEY_MONTH must be set to a month from 01 through 12."
             exit 1
           fi
