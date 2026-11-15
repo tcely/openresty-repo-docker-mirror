@@ -77,27 +77,10 @@ jobs:
           echo "previous_month=${previous_month}" >> "${GITHUB_OUTPUT}"
           echo 'present=true' >> "${GITHUB_OUTPUT}"
 
-      - name: Download and verify age
+      - name: Install age
+        id: 'age'
         if: steps.candidate.outputs.present == 'true'
-        shell: 'bash'
-        run: |
-          set -euo pipefail
-          python3 scripts/download-verify-age.py \
-            --version '1.3.2' \
-            --sha256 'cbe24006683f8eb669266162894b9a522a1af52f2665fbc63a4bb032ed26ac10' \
-            --output "${RUNNER_TEMP}/age.tar.gz"
-
-      - name: Extract age
-        if: steps.candidate.outputs.present == 'true'
-        shell: 'bash'
-        run: |
-          set -euo pipefail
-          extract_dir="${RUNNER_TEMP}/age-extract"
-          bin_dir="${RUNNER_TEMP}/age-bin"
-          mkdir -p "${extract_dir}" "${bin_dir}"
-          tar -C "${extract_dir}" -xvpf "${RUNNER_TEMP}/age.tar.gz"
-          install -m 0755 "${extract_dir}/age/age" "${bin_dir}/age"
-          echo "${bin_dir}" >> "${GITHUB_PATH}"
+        uses: ./.github/actions/setup-age
 
       - name: Verify stored identity and recipient
         id: verify

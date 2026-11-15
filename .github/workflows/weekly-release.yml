@@ -1,0 +1,122 @@
+name: Weekly Release
+
+on:
+  schedule:
+    - cron: '3 18 * * 2'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  prepare-key:
+    runs-on: ubuntu-slim
+    outputs:
+      age-encrypted-private-key: ${{ steps.keygen.outputs.age_encrypted_private_key }}
+      age-key-month: ${{ steps.keygen.outputs.age_key_month }}
+      gpg-mirror-pub: ${{ steps.keygen.outputs.gpg_mirror_pub }}
+      gpg-upstream-pub: ${{ steps.keygen.outputs.gpg_upstream_pub }}
+      release-tag: ${{ steps.meta.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set weekly release tag
+        id: meta
+        shell: 'bash'
+        run: printf 'tag=v%s\n' "$(date -u +%Y.%m.%d)" >> "${GITHUB_OUTPUT}"
+
+      - name: Install age
+        id: 'age'
+        uses: ./.github/actions/setup-age
+        with:
+          keygen: true
+
+      - name: Generate, encrypt, and export signing keys
+        id: keygen
+        shell: 'bash'
+        env:
+          RELEASE_TAG: ${{ steps.meta.outputs.tag }}
+          AGE_KEY_MONTH: ${{ vars.AGE_KEY_MONTH }}
+          AGE_RECIPIENT: ${{ vars[format('AGE_RECIPIENT_{0}', vars.AGE_KEY_MONTH)] }}
+        run: ./scripts/prepare-keys.sh
+
+      - name: Upload public keyring artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: openresty-mirror-keys
+          path: |
+            ${{ steps.keygen.outputs.out_dir }}/openresty-mirror.asc
+            ${{ steps.keygen.outputs.out_dir }}/openresty-upstream.asc
+            ${{ steps.keygen.outputs.out_dir }}/openresty-keys.clearsigned.asc
+          if-no-files-found: error
+          retention-days: 10
+
+  build:
+    needs: prepare-key
+    uses: docker/github-builder/.github/workflows/build.yml@v1
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      context: ./docker
+      # file: Dockerfile
+      target: 'artifact'
+      output: local
+      sign: false
+      artifact-upload: true
+      artifact-name: openresty-trixie-rootfs
+      artifact-retention-days: 1
+      platforms: linux/amd64,linux/arm64
+    secrets:
+      build-secrets: |
+        apt_signing_key_age: ${{ toJSON(needs.prepare-key.outputs.age-encrypted-private-key) }}
+        age_identity: ${{ toJSON(secrets[format('AGE_IDENTITY_{0}', needs.prepare-key.outputs.age-key-month)]) }}
+        openresty_mirror_pub: ${{ toJSON(needs.prepare-key.outputs.gpg-mirror-pub) }}
+        openresty_upstream_pub: ${{ toJSON(needs.prepare-key.outputs.gpg-upstream-pub) }}
+
+  publish-release:
+    needs: [prepare-key, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - uses: actions/checkout@v7
+
+      - name: Prepare temporary staging directories
+        id: stage
+        shell: 'bash'
+        run: |
+          echo "assets_dir=$(mktemp -d 'release-assets.XXXXXX')" >> "${GITHUB_OUTPUT}"
+          echo "rootfs_dir=$(mktemp -d 'rootfs.XXXXXX')" >> "${GITHUB_OUTPUT}"
+
+      - name: Download keyring artifacts
+        uses: actions/download-artifact@v8
+        with:
+          name: openresty-mirror-keys
+          path: ${{ steps.stage.outputs.assets_dir }}
+
+      - name: Download exported platform rootfs artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: 'openresty-trixie-rootfs*'
+          merge-multiple: true
+          path: ${{ steps.stage.outputs.rootfs_dir }}
+
+      - name: Install age
+        id: 'age'
+        uses: ./.github/actions/setup-age
+
+      - name: Package, checksum, sign, verify, and publish immutable release
+        shell: 'bash'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AGE_ENCRYPTED_PRIVATE_KEY: ${{ needs.prepare-key.outputs.age-encrypted-private-key }}
+          AGE_IDENTITY: ${{ secrets[format('AGE_IDENTITY_{0}', needs.prepare-key.outputs.age-key-month)] }}
+          RELEASE_TAG: ${{ needs.prepare-key.outputs.release-tag }}
+          ASSETS_DIR: ${{ steps.stage.outputs.assets_dir }}
+          ROOTFS_DIR: ${{ steps.stage.outputs.rootfs_dir }}
+        run: ./scripts/publish-release.sh

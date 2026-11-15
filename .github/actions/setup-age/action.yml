@@ -1,0 +1,75 @@
+name: Setup age
+description: Download, verify, extract age; then add to PATH
+inputs:
+  checksum:
+    required: false
+    default: 'cbe24006683f8eb669266162894b9a522a1af52f2665fbc63a4bb032ed26ac10'
+    description: The SHA-256 checksum string that verifies the downloaded archive.
+  keygen:
+    required: false
+    default: false
+    description: Should keygen also be installed?
+  version:
+    required: false
+    default: '1.3.2'
+    description: Which release should be installed?
+outputs:
+  directory:
+    value: ${{ steps.set.outputs.directory }}
+    description: Directory where the binaries were installed
+
+runs:
+  using: 'composite'
+  steps:
+    - uses: actions/checkout@v7
+      with:
+        persist-credentials: false
+    - name: Set outputs
+      id: 'set'
+      shell: 'bash'
+      env:
+        INPUT_VERSION: '${{ inputs.version }}'
+      run: |
+        work_dir="$(mktemp -d)"
+        chmod 00700 "${work_dir}"
+        bin_dir="${work_dir}/age-bin"
+        mkdir "${bin_dir}"
+
+        set_sl_var() { local f='%s=%s\n' ; printf -- "${f}" "$@" ; } ;
+
+        {
+          set_sl_var directory "${bin_dir}"
+          set_sl_var version "${INPUT_VERSION}"
+          set_sl_var work_dir "${work_dir}"
+        } >> "${GITHUB_OUTPUT}"
+    - name: Install
+      id: 'install'
+      shell: 'bash'
+      env:
+        INPUT_CHECKSUM: '${{ inputs.checksum }}'
+        INPUT_KEYGEN: '${{ inputs.keygen }}'
+        INPUT_VERSION: '${{ inputs.version }}'
+        bin_dir: '${{ steps.set.outputs.directory }}'
+        work_dir: '${{ steps.set.outputs.work_dir }}'
+      run: |
+        set -euo pipefail
+
+        python3 docker/download-verify-age.py \
+            --version "${INPUT_VERSION}" \
+            --sha256 "${INPUT_CHECKSUM}" \
+            --output "${work_dir}/age.tar.gz"
+
+        extract_dir="${work_dir}/age-extract"
+        mkdir "${extract_dir}"
+
+        tar -C "${extract_dir}" -xvpf "${work_dir}/age.tar.gz"
+        rm -v "${work_dir}/age.tar.gz"
+
+        install -m 0755 "${extract_dir}/age/age" "${bin_dir}/age"
+        if [ 'true' = "${INPUT_KEYGEN,,}" ]
+        then
+            install -m 0755 "${extract_dir}/age/age-keygen" "${bin_dir}/age-keygen"
+        fi
+        rm -v -f -r "${extract_dir}"
+
+        echo "${bin_dir}" >> "${GITHUB_PATH}"

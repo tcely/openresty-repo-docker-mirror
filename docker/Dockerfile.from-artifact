@@ -1,0 +1,23 @@
+# syntax=docker/dockerfile:1
+
+FROM python:3.15-slim-trixie AS artifact-extract
+
+RUN --mount=type=bind,source=repo-artifact.tar,target=/run/repo-artifact.tar,readonly \
+    tar --numeric-owner -xpf /run/repo-artifact.tar -C / && \
+    chown -c -R 0:0 /etc/apt/keyrings && \
+    chmod 0644 /etc/apt/keyrings/openresty-upstream.asc \
+               /etc/apt/keyrings/openresty-mirror.asc && \
+    chown -c -R 0:0 /srv/repo && \
+    find /srv/repo \
+      '(' -type d -exec chmod 00755 '{}' + ')' -o \
+      '(' -type f -exec chmod 00644 '{}' + ')'
+
+FROM artifact-extract AS final
+
+VOLUME ["/srv/repo"]
+
+USER 65534:65534
+EXPOSE 8080
+
+ENTRYPOINT ["python3", "-m", "http.server", "--directory", "/srv/repo"]
+CMD ["--bind", "0.0.0.0", "8080"]
