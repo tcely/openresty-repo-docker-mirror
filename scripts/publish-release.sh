@@ -1,6 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+: "${AGE_ENCRYPTED_PRIVATE_KEY:?AGE_ENCRYPTED_PRIVATE_KEY is required}"
+: "${AGE_IDENTITY:?AGE_IDENTITY is required}"
+: "${RELEASE_TAG:?RELEASE_TAG is required}"
+: "${ASSETS_DIR:?ASSETS_DIR is required}"
+: "${ROOTFS_DIR:?ROOTFS_DIR is required}"
+: "${GH_TOKEN:?GH_TOKEN is required}"
+
+command -v age >/dev/null
+
 WORK_DIR="$(mktemp -d)"
 cleanup() {
     rm -rf "${WORK_DIR}"
@@ -8,12 +17,27 @@ cleanup() {
     docker network rm openresty-test-net >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
+chmod 00700 "${WORK_DIR}"
+
+IDENTITY_FILE="${WORK_DIR}/age-identity"
+CIPHERTEXT_FILE="${WORK_DIR}/apt-signing-key.age"
+PRIVATE_KEY_FILE="${WORK_DIR}/apt-signing-key.asc"
+
+( set +x ; printf '%s\n' "${AGE_IDENTITY}" >| "${IDENTITY_FILE}" )
+chmod 00600 "${IDENTITY_FILE}"
+printf '%s' "${AGE_ENCRYPTED_PRIVATE_KEY}" >| "${CIPHERTEXT_FILE}"
+chmod 00600 "${CIPHERTEXT_FILE}"
+
+age -d -i "${IDENTITY_FILE}" -o "${PRIVATE_KEY_FILE}" "${CIPHERTEXT_FILE}"
+chmod 00600 "${PRIVATE_KEY_FILE}"
 
 export GNUPGHOME="${WORK_DIR}/gnupg"
-mkdir -m 0700 "${GNUPGHOME}"
+mkdir -m 00700 "${GNUPGHOME}"
+gpg --batch --import "${PRIVATE_KEY_FILE}"
+rm -f "${PRIVATE_KEY_FILE}" "${IDENTITY_FILE}" "${CIPHERTEXT_FILE}"
 
-( set +x ; printf '%s\n' "${GPG_PRIVATE_KEY}" | gpg --batch --import )
-FPR="$(gpg --batch --list-secret-keys --with-colons | awk -F: '/^fpr:/ {print $10; exit}')"
+FPR="$(gpg --batch --list-secret-keys --with-colons | awk -F: '/^fpr:/ { print $10; exit; }')"
+test -n "${FPR}"
 
 printf '%s\n' 'docker build'
 docker build --help
@@ -23,7 +47,7 @@ printf '%s\n' 'docker buildx build'
 docker buildx build --help
 printf '%s\n' '' ''
 
-# Package each architecture rootfs into a Docker tar archive, checksum (--tag), compress, and sign
+# Package each architecture rootfs into a Docker tar archive, checksum, compress, and sign.
 for arch in amd64 arm64; do
     SRC_DIR="${ROOTFS_DIR}/linux_${arch}"
     if [ ! -d "${SRC_DIR}" ]; then
@@ -34,7 +58,11 @@ for arch in amd64 arm64; do
 
     IMAGE_REF="openresty-trixie-repo-${arch}:${RELEASE_TAG}"
     TAR_NAME="openresty-trixie-repo-${arch}-${RELEASE_TAG}.tar"
-    ( cd docker && docker build --platform "linux/${arch}" -f Dockerfile.from-artifact -t "${IMAGE_REF}" . )
+
+    (
+        cd docker
+        docker build --platform "linux/${arch}" -f Dockerfile.from-artifact -t "${IMAGE_REF}" .
+    )
 
     docker save -o "${ASSETS_DIR}/${TAR_NAME}" "${IMAGE_REF}"
     docker rmi "${IMAGE_REF}" >/dev/null
@@ -55,13 +83,9 @@ for arch in amd64 arm64; do
     )
 done
 
-# Verify all signatures, checksums, and round-trip .tar.zst load + live Trixie APT client test
+# Verify signatures, checksums, and round-trip .tar.zst load plus live Trixie APT client test.
 (
     cd "${ASSETS_DIR}"
-    gpg --batch --decrypt -o .output openresty-keys.clearsigned.asc
-    cat -v .output
-    rm -f .output
-
     for arch in amd64 arm64; do
         TAR_NAME="openresty-trixie-repo-${arch}-${RELEASE_TAG}.tar"
         ZST_NAME="${TAR_NAME}.zst"
@@ -85,7 +109,8 @@ docker network create openresty-test-net >/dev/null
 docker run -d \
     --name openresty-repo-test \
     --network openresty-test-net \
-    "openresty-trixie-repo-amd64:${RELEASE_TAG}" --bind 0.0.0.0 8090 >/dev/null
+    "openresty-trixie-repo-amd64:${RELEASE_TAG}" \
+    --bind 0.0.0.0 8090 >/dev/null
 
 docker run --rm \
     --network openresty-test-net \
@@ -101,17 +126,17 @@ Signed-By: /etc/apt/keyrings/openresty-mirror.asc
 EOF
         apt-get update
         apt-cache policy openresty | grep -qFe "http://openresty-repo-test:8090 trixie/openresty"
-  '
+    '
 
-# 3. Create draft release and publish as immutable
-NOTES=$(cat <<'EOF'
-Self-contained OpenResty APT repository images for Debian Trixie (`amd64` and `arm64`) compressed with `zstd`, alongside:
-- `openresty-mirror.asc` — Ephemeral RSA 3072 public signing key for APT `Signed-By:`
-- `openresty-upstream.asc` — Upstream OpenResty public key used to verify origin packages at build time
-- `openresty-keys.clearsigned.asc` — Clearsigned bundle containing both the mirror and upstream armored public key blocks
+# Create a draft release, then publish it as immutable.
+NOTES="$(cat <<'EOF'
+Self-contained OpenResty APT repository images for Debian Trixie (`amd64` and `arm64`), compressed with `zstd`, alongside:
+- `openresty-mirror.asc` — ephemeral RSA 3072 public signing key for APT `Signed-By:`
+- `openresty-upstream.asc` — upstream OpenResty public key used to verify origin packages during build
+- `openresty-keys.clearsigned.asc` — clearsigned bundle containing both armored public key blocks
 - Tagged SHA-256 checksums (`*.sha256`) and detached GPG signatures (`*.sha256.asc`) for both the `.tar` and `.tar.zst` image archives
 EOF
-)
+)"
 
 gh release create "${RELEASE_TAG}" \
     "${ASSETS_DIR}"/* \
