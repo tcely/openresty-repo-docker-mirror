@@ -27,9 +27,15 @@ RUN --mount=type=secret,id=apt_signing_key_age,required=true \
     install -m 0644 -o 0 -g 0 /run/secrets/openresty_mirror_pub /etc/apt/keyrings/openresty-mirror.asc; \
     work_dir="$(mktemp -d)" ; \
     mkdir -p "${work_dir}/age-extract"; \
+    arch="$(dpkg --print-architecture)"; \
+    case "${arch}" in \
+        (amd64) checksum='cbe24006683f8eb669266162894b9a522a1af52f2665fbc63a4bb032ed26ac10' ;; \
+        (arm64) checksum='6b8dc4333c53a5a57c9e5834e3a48f92605d7154014cd07269ff3327db5d37f4' ;; \
+    esac; \
     python3 /run/download-verify-age.py \
         --version '1.3.2' \
-        --sha256 'cbe24006683f8eb669266162894b9a522a1af52f2665fbc63a4bb032ed26ac10' \
+        --arch "${arch}" \
+        --sha256 "${checksum}" \
         --output "${work_dir}/age.tar.gz"; \
     tar -C "${work_dir}/age-extract" -xvpf "${work_dir}/age.tar.gz"; \
     rm -f "${work_dir}/age.tar.gz"; \
