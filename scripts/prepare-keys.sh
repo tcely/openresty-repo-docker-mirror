@@ -38,7 +38,7 @@ gpg --batch --armor --export "${FPR}" > "${OUT_DIR}/openresty-mirror.asc"
 # Fetch the current upstream OpenResty public key.
 BASE_URL='https://openresty.org'
 KEY_PATH='/package/pubkey.gpg'
-curl --retry -fsSL "${BASE_URL}${KEY_PATH}" -o "${OUT_DIR}/openresty-upstream.asc"
+curl --retry 7 -fsSL "${BASE_URL}${KEY_PATH}" -o "${OUT_DIR}/openresty-upstream.asc"
 test -s "${OUT_DIR}/openresty-upstream.asc"
 
 # Combine the public keys and clearsign the bundle with the mirror key.
