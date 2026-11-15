@@ -23,6 +23,7 @@ runs:
   steps:
     - uses: actions/checkout@v7
       with:
+        clean: false
         persist-credentials: false
     - name: Set outputs
       id: 'set'
