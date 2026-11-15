@@ -28,7 +28,7 @@ The workflow `.github/workflows/weekly-release.yml` runs on a weekly cron (`3 18
 
 1. **`prepare-key`** runs on `ubuntu-slim`. It runs `scripts/prepare-keys.sh`, which generates an RSA 3072 sign-only key with no expiration in a temporary `GNUPGHOME`, fetches the upstream key from `https://openresty.org/package/pubkey.gpg`, and creates the clearsigned bundle `openresty-keys.clearsigned.asc`. It exports the private key, mirror public key, and upstream public key as job outputs, which are passed to later jobs. The three key files are also uploaded as a workflow artifact.
 2. **`build`** calls the reusable `docker/github-builder` workflow with `target: 'artifact'`, `output: local`, and `platforms: linux/amd64,linux/arm64`. The private signing key and both public keys are passed to the build as the BuildKit secrets `apt_signing_key`, `openresty_mirror_pub`, and `openresty_upstream_pub`.
-3. **`publish-release`** runs on `ubuntu-latest`. It runs `scripts/publish-release.sh`, which packages each architecture's archive, compresses it, creates checksums and signatures, verifies them, runs the smoke test on `amd64`, creates a draft release, and then publishes it.
+3. **`publish-release`** runs on `ubuntu-latest`. It runs `scripts/publish-release.sh`, which packages each architecture's archive, compresses it, creates checksums and signatures, verifies them, runs the smoke test on `amd64`, and creates a draft release. It publishes the draft only after every asset is uploaded and verified. Releases are immutable, so a tag that already exists can't be reused. If the run fails after the draft is created, for example because the tag already exists, the draft remains and a maintainer must delete it manually before the workflow can create a release for that date.
 
 ### Build Paths
 
@@ -42,7 +42,7 @@ Both images run as `65534:65534`, expose port `8080`, declare `VOLUME ["/srv/rep
 
 ### Smoke Test
 
-Before a release is created, `publish-release.sh` loads the `amd64` image and runs it on port `8090`, not the image's default `8080`. The test client writes its own APT source file that points at the running mirror, mounts `openresty-mirror.asc` from the release assets as its keyring, and runs `apt-get update` and `apt-cache policy openresty`. This confirms that the served index, the signing key, and the source configuration work together. Only `amd64` is loaded and tested.
+Before a release is created, `publish-release.sh` loads the `amd64` image and runs it on port `8090`, not the image's default `8080`. The smoke test deliberately uses port 8090 instead of the default 8080, which confirms that the image still accepts a different port. The test client writes its own APT source file that points at the running mirror, mounts `openresty-mirror.asc` from the release assets as its keyring, and runs `apt-get update` and `apt-cache policy openresty`. This confirms that the served index, the signing key, and the source configuration work together. Only `amd64` is loaded and tested.
 
 ---
 
@@ -66,7 +66,7 @@ Each `.deb` in `/srv/repo/pool` has two companion files. A `.sha256` file contai
 
 ### HTTP Service
 
-**The mirror is served over plain HTTP** by Python's `http.server`, started by the image's `ENTRYPOINT` with `--directory /srv/repo`. The server runs as UID 65534 and has no TLS, no authentication, and no access controls beyond what `http.server` provides. Integrity depends on the APT signature check, not on transport security, so the signing key must be installed from a trusted copy, such as the release assets or the copy embedded in the image.
+**The mirror is served over plain HTTP** by Python's `http.server`. This is intentional. It is started by the image's `ENTRYPOINT` with `--directory /srv/repo`. The server runs as UID 65534 and has no TLS, no authentication, and no access controls beyond what `http.server` provides. Integrity depends on the APT signature check, not on transport security, so the signing key must be installed from a trusted copy, such as the release assets or the copy embedded in the image.
 
 ---
 
@@ -139,7 +139,7 @@ install -m 0644 -o 0 -g 0 openresty-mirror.asc /etc/apt/keyrings/openresty-mirro
 
 cat <<'EOF' > /etc/apt/sources.list.d/openresty.sources
 Types: deb
-URIs: http://<IPADDR>:8080
+URIs: http://<host>:8080
 Suites: trixie
 Components: openresty
 Signed-By: /etc/apt/keyrings/openresty-mirror.asc
@@ -150,7 +150,7 @@ apt-get update
 apt-get install -y --no-install-recommends openresty
 ```
 
-Replace `<IPADDR>` with the address of the machine running the container.
+Replace `<host>` with the address of the machine running the container.
 
 ---
 
@@ -161,7 +161,7 @@ To build the `final` target directly, supply the three secrets that the release 
 ```sh
 docker buildx build \
   --target final \
-  --secret id=apt_signing_key,src=openresty-mirror-private.asc \
+  --secret id=apt_signing_key,src=mirror-private.asc \
   --secret id=openresty_mirror_pub,src=openresty-mirror.asc \
   --secret id=openresty_upstream_pub,src=openresty-upstream.asc \
   -t openresty-trixie-repo-local \
@@ -175,7 +175,7 @@ A local build uses the signing key you supply. The build fails unless that key m
 ## Known Limitations
 
 - **Only `amd64` is runtime-tested.** The smoke test loads and runs only the `amd64` image. The `arm64` archives are checked for signatures and checksums before publishing, but they are not loaded or run (see Smoke Test).
-- **The mirror is served over plain HTTP.** APT signature checks are the only integrity guarantee (see HTTP Service).
+- **The mirror is served over plain HTTP, by design.** APT signature checks are the integrity guarantee (see HTTP Service).
 - **The upstream key is trust-on-first-use.** It is not pinned to a fingerprint (see Upstream Fetch and Verification).
 - **Each release has a new signing key.** Clients must use the key from the same release (see What This Repository Produces).
 - **Snapshots never expire.** `Release` has no `Valid-Until` (see Signing and Freshness).
