@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-set -euo pipefail
+set -euxo pipefail
 
 : "${RELEASE_TAG:?RELEASE_TAG is required}"
 : "${AGE_KEY_MONTH:?AGE_KEY_MONTH is required}"
@@ -33,7 +33,7 @@ FPR="$(gpg --batch --list-secret-keys --with-colons | awk -F: '/^fpr:/ { print $
 test -n "${FPR}"
 
 # Export only the public mirror key for publication.
-gpg --batch --armor --export "${FPR}" > "${OUT_DIR}/openresty-mirror.asc"
+gpg --batch --armor --output "${OUT_DIR}/openresty-mirror.asc" --export "${FPR}"
 
 # Fetch the current upstream OpenResty public key.
 BASE_URL='https://openresty.org'
@@ -55,27 +55,35 @@ gpg --batch --yes --clearsign \
   "${WORK_DIR}/combined-keys.txt"
 
 # Export the private signing key to a temporary file, then encrypt it.
-gpg --batch --armor --export-secret-keys "${FPR}" > "${WORK_DIR}/apt-signing-key.asc"
+gpg --batch --armor --output "${WORK_DIR}/apt-signing-key.asc" --export-secret-keys "${FPR}"
 age -r "${AGE_RECIPIENT}" \
     -o "${WORK_DIR}/apt-signing-key.age" \
     "${WORK_DIR}/apt-signing-key.asc"
 rm -f "${WORK_DIR}/apt-signing-key.asc"
 
+# For setting single line variables in the environment or output
+set_sl_var() { local f='%s=%s\n' ; printf -- "${f}" "$@" ; } ;
+
+# Used together to set multiple line variables in the environment or output
+mk_delim() { local f='%s_EOF_%d_' ; printf -- "${f}" "$1" "${RANDOM}" ; } ;
+open_ml_var() { local f=''\%'s<<'\%'s\n' ; printf -- "${f}" "$2" "$1" ; } ;
+close_ml_var() { local f='%s\n' ; printf -- "${f}" "$1" ; } ;
+
 # Emit a collision-resistant multiline output delimiter.
 emit_output() {
     local name="$1"
     local file="$2"
-    local delimiter
-    delimiter="$(python3 -c 'import secrets; print(secrets.token_hex(24))')"
+    local delim
+    delim="$(mk_delim "${name}")"
 
     {
-        printf '%s<<%s\n' "${name}" "${delimiter}"
+        open_ml_var "${delim}" "${name}"
         cat "${file}"
-        printf '%s\n' "${delimiter}"
+        close_ml_var "${delim}" "${name}"
     } >> "${GITHUB_OUTPUT}"
 }
 
 emit_output age_encrypted_private_key "${WORK_DIR}/apt-signing-key.age"
 emit_output gpg_mirror_pub "${OUT_DIR}/openresty-mirror.asc"
 emit_output gpg_upstream_pub "${OUT_DIR}/openresty-upstream.asc"
-echo "age_key_month=${AGE_KEY_MONTH}" >> "${GITHUB_OUTPUT}"
+set_sl_var 'age_key_month' "${AGE_KEY_MONTH}" >> "${GITHUB_OUTPUT}"
