@@ -12,7 +12,7 @@ echo "out_dir=${OUT_DIR}" >> "${GITHUB_OUTPUT}"
 
 # Expiration set to '0' (never expires) so archived releases remain valid in the future
 gpg --batch --passphrase '' \
-  --quick-generate-key "OpenResty Trixie Mirror (${RELEASE_TAG}) <repo@localhost>" \
+  --quick-generate-key "OpenResty Mirror (${RELEASE_TAG}) <admin@openresty.com>" \
   rsa3072 sign 0
 
 # 1. Raw armored mirror public key (directly usable in APT Signed-By:)
@@ -26,7 +26,7 @@ test -s "${OUT_DIR}/openresty-upstream.asc"
 
 # 3. Combine both armored public key blocks and clearsign with our mirror key
 {
-  printf '# OpenResty Trixie Mirror Public Key (%s)\n' "${RELEASE_TAG}"
+  printf '# OpenResty Mirror Public Key (%s)\n' "${RELEASE_TAG}"
   cat "${OUT_DIR}/openresty-mirror.asc"
   printf '\n# Upstream OpenResty Public Key\n'
   cat "${OUT_DIR}/openresty-upstream.asc"
