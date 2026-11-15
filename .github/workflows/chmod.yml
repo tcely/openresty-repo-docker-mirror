@@ -3,7 +3,7 @@ name: chmod executables
 on:
   push:
     branches:
-      - tcely-patch-1
+      - main
 
 jobs:
   chmod:
