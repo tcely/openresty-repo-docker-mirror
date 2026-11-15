@@ -13,7 +13,7 @@ from urllib.request import Request, urlopen
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argumrnt('--arch', default='amd64')
+    parser.add_argument('--arch', default='amd64')
     parser.add_argument('--version', required=True)
     parser.add_argument('--sha256', required=True)
     parser.add_argument('--output', required=True, type=Path)
