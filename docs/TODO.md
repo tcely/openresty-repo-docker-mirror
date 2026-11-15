@@ -16,7 +16,7 @@
   2. Verify from the pool directory with `cd pool/openresty/<dir> && sha256sum -c <name>.deb.sha256`.
   3. Note the change in the file format in the release notes, since anyone parsing these files will be affected.
 
-- [ ] **Move the signing key out of GitHub job outputs.** The private key currently passes from `prepare-key` to `build` as the `apt_signing_key` secret, and to `publish-release` as the `GPG_PRIVATE_KEY` environment variable. It is also exported as a job output. The decision is to sign APT metadata in `build` and the release tar checksums in `publish-release`, because `docker save` runs in that job. Both jobs therefore need the key.
+- [x] **Move the signing key out of GitHub job outputs.** The private key currently passes from `prepare-key` to `build` as the `apt_signing_key` secret, and to `publish-release` as the `GPG_PRIVATE_KEY` environment variable. It is also exported as a job output. The decision is to sign APT metadata in `build` and the release tar checksums in `publish-release`, because `docker save` runs in that job. Both jobs therefore need the key.
   1. Remove the private key from the `prepare-key` job outputs.
   2. Store the private key as an environment-scoped secret, restricted to the release workflow.
   3. Give each job that needs the key access to that secret directly, so the key never appears in run data.
