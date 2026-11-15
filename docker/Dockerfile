@@ -17,9 +17,14 @@ RUN apt-get update && \
 
 RUN --mount=type=secret,id=apt_signing_key_age,required=true \
     --mount=type=secret,id=age_identity,required=true \
+    --mount=type=secret,id=openresty_mirror_pub,required=true \
+    --mount=type=secret,id=openresty_upstream_pub,required=true \
     --mount=type=bind,source=download-verify-age.py,target=/run/download-verify-age.py,ro \
     --mount=type=bind,source=build.sh,target=/run/build.sh,ro \
     set -eux; \
+    install -d -m 0755 -o 0 -g 0 /etc/apt/keyrings; \
+    install -m 0644 -o 0 -g 0 /run/secrets/openresty_upstream_pub /etc/apt/keyrings/openresty-upstream.asc; \
+    install -m 0644 -o 0 -g 0 /run/secrets/openresty_mirror_pub /etc/apt/keyrings/openresty-mirror.asc; \
     work_dir="$(mktemp -d)" ; \
     mkdir -p "${work_dir}/age-extract"; \
     python3 /run/download-verify-age.py \
