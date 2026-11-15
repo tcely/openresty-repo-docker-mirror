@@ -9,13 +9,18 @@ export GNUPGHOME="${WORK_DIR}/gnupg"
 
 mkdir -m 0700 "${GNUPGHOME}"
 
-gpg --batch --import /run/secrets/apt_signing_key
+APT_SIGNING_KEY_FILE="${APT_SIGNING_KEY_FILE:-/run/secrets/apt_signing_key}"
+test -s "$APT_SIGNING_KEY_FILE"
+gpg --batch --import "$APT_SIGNING_KEY_FILE"
 
-FPR="$(gpg --batch --list-secret-keys --with-colons | awk -F: '/^fpr:/ {print $10; exit}')"
+FPR="$(gpg --batch --list-secret-keys --with-colons | awk -F: '/^fpr:/ { print $10; exit; }')"
 CONTEXT_FPR="$(gpg --batch --with-colons --import-options show-only --import \
-    /etc/apt/keyrings/openresty-mirror.asc | awk -F: '/^fpr:/ {print $10; exit}')"
+    /etc/apt/keyrings/openresty-mirror.asc | awk -F: '/^fpr:/ { print $10; exit; }')"
 test "${FPR}" = "${CONTEXT_FPR}"
-gpg --batch --dearmor -o "${WORK_DIR}/openresty-upstream.gpg" /etc/apt/keyrings/openresty-upstream.asc
+
+gpg --batch --dearmor \
+  -o "${WORK_DIR}/openresty-upstream.gpg" \
+  /etc/apt/keyrings/openresty-upstream.asc
 
 BASE_URL='https://openresty.org'
 
@@ -66,7 +71,7 @@ do
     [[ "${EXPECTED_PKG_SHA256}" =~ ^[0-9a-f]{64}$ ]]
     printf '%s *%s\n' "${EXPECTED_PKG_SHA256}" "${ARCH_TMP}/Packages.gz" | sha256sum -c -
 
-    # Reject any CR/NUL bytes in decompressed Packages metadata before parsing
+    # Reject CR/NUL bytes in decompressed Packages metadata before parsing.
     gzip -cd "${ARCH_TMP}/Packages.gz" | tr -d '\r' | awk '
         /^Filename:/ { f=$2; }
         /^SHA256:/   { s=$2; }
@@ -79,13 +84,13 @@ do
     : > "${ARCH_TMP}/aria2.input"
     while IFS=$'\t' read -r expected_sha relpath extra
     do
-        # 1. Ensure strictly 2 tab-delimited columns (no extra fields or embedded whitespace)
+        # Ensure strictly two tab-delimited columns.
         test -z "${extra:-}"
 
-        # 2. Validate SHA-256 digest format
+        # Validate SHA-256 digest format.
         [[ "${expected_sha}" =~ ^[0-9a-f]{64}$ ]]
 
-        # 3. Validate relative path: strict pool/*.deb allowlist and no '/../' traversal
+        # Validate relative path: strict pool/*.deb allowlist and no traversal.
         [[ "${relpath}" =~ ^pool/[A-Za-z0-9.+~/_-]+\.deb$ ]]
         [[ "${relpath}" != *"/../"* ]]
 
@@ -123,6 +128,7 @@ do
         --retry-wait=2
 
     find /srv/repo/pool -name '*.sha256' -exec cat '{}' + | sha256sum --quiet -c -w --strict
+
     rm -rf "${ARCH_TMP}"
 
     mkdir -p "dists/trixie/openresty/binary-${arch}"
@@ -146,8 +152,12 @@ gpg --batch --yes --default-key "${FPR}" \
 gpg --batch --yes --default-key "${FPR}" \
     --clearsign -o dists/trixie/InRelease dists/trixie/Release
 
-install -m 0644 -o 0 -g 0 /etc/apt/keyrings/openresty-upstream.asc /srv/repo/openresty-upstream.asc
-install -m 0644 -o 0 -g 0 /etc/apt/keyrings/openresty-mirror.asc /srv/repo/openresty-mirror.asc
+install -m 0644 -o 0 -g 0 \
+    /etc/apt/keyrings/openresty-upstream.asc \
+    /srv/repo/openresty-upstream.asc
+install -m 0644 -o 0 -g 0 \
+    /etc/apt/keyrings/openresty-mirror.asc \
+    /srv/repo/openresty-mirror.asc
 
 find /srv/repo -type d -exec chmod 0755 {} +
 find /srv/repo -type f -exec chmod 0644 {} +
