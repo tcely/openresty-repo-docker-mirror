@@ -17,19 +17,19 @@
 - [ ] **Decide the signing-key design.** Choose between generating and using the key in a single job or storing it as a secure secret. The key-handling fix depends on this choice.
   - Suggested fix: recommend the single-job approach above. It removes the key from job outputs and needs no long-lived secret. Record the decision here before implementing the job-output change.
 
-- [ ] **Add prerequisites to the README verification section.** The verification script needs `gpg`, `zstd`, `sha256sum`, and `docker` on the host. List them before the script.
+## Done
+
+- [x] **Add prerequisites to the README verification section.** The verification script needs `gpg`, `zstd`, `sha256sum`, and `docker` on the host. List them before the script.
   - Suggested fix: add a short bulleted list above the verification block, such as "You need `gpg`, `zstd`, `sha256sum` (coreutils), and `docker` installed."
 
-- [ ] **Trim duplicated limitations in the README.** HTTP, trust-on-first-use, per-release keys, `Valid-Until`, NUL bytes, and the bookworm-to-trixie relabel are described in both the body and "Known Limitations". Keep one.
+- [x] **Trim duplicated limitations in the README.** HTTP, trust-on-first-use, per-release keys, `Valid-Until`, NUL bytes, and the bookworm-to-trixie relabel are described in both the body and "Known Limitations". Keep one.
   - Suggested fix: keep the full explanation in the body sections, and make "Known Limitations" a one-line bullet for each item that links to its section. Or keep the bullets and remove the duplicate sentences from the body. Pick one approach and apply it to all six items.
 
-- [ ] **Clarify the `Valid-Until` wording in the README.** Say that APT has no expiry to enforce, so a stale mirror is never flagged, rather than only that APT won't reject it.
+- [x] **Clarify the `Valid-Until` wording in the README.** Say that APT has no expiry to enforce, so a stale mirror is never flagged, rather than only that APT won't reject it.
   - Suggested fix: replace the current sentence with "Because `Release` has no `Valid-Until`, APT has no expiry to enforce. A stale mirror is never flagged as expired, so the snapshot's age is the only freshness signal."
 
-- [ ] **Note `--network host` is Linux-only in the README.** The `docker run` example that uses `--network host` should say it applies only to Linux hosts.
+- [x] **Note `--network host` is Linux-only in the README.** The `docker run` example that uses `--network host` should say it applies only to Linux hosts.
   - Suggested fix: add a sentence before the example, such as "`--network host` works only on Linux. Docker Desktop on macOS and Windows doesn't support it, so use the `-p` form there."
-
-## Done
 
 - [x] **Confirm the `prepare-key` artifact contains no private key.** The upload lists three explicit files. `openresty-mirror.asc` is written with `gpg --armor --export`, which exports public keys only, and the clearsigned bundle is built from public key blocks. The private key leaves the job only as the `gpg-private-key` output, which is covered separately.
 
