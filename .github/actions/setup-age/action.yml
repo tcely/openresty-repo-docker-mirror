@@ -21,10 +21,6 @@ outputs:
 runs:
   using: 'composite'
   steps:
-    - uses: actions/checkout@v7
-      with:
-        clean: false
-        persist-credentials: false
     - name: Set outputs
       id: 'set'
       shell: 'bash'
@@ -55,7 +51,7 @@ runs:
       run: |
         set -euo pipefail
 
-        python3 docker/download-verify-age.py \
+        python3 "${GITHUB_ACTION_PATH}"/download-verify-age.py \
             --version "${INPUT_VERSION}" \
             --sha256 "${INPUT_CHECKSUM}" \
             --output "${work_dir}/age.tar.gz"
