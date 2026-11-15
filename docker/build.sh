@@ -46,6 +46,7 @@ do
         --remote-time \
         --summary-interval=0 \
         --console-log-level=warn \
+        --show-console-readout=false \
         --check-certificate=true \
         --min-tls-version=TLSv1.2 \
         --follow-metalink=false \
@@ -113,6 +114,7 @@ do
         --remote-time \
         --summary-interval=0 \
         --console-log-level=warn \
+        --show-console-readout=false \
         --check-certificate=true \
         --min-tls-version=TLSv1.2 \
         --follow-metalink=false \
