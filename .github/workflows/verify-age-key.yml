@@ -1,0 +1,189 @@
+name: Verify staged age transport key
+
+on:
+  workflow_run:
+    workflows:
+      - Rotate age transport key
+    types:
+      - completed
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: age-key-cutover
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    # workflow_run is privileged. Accept only successful runs of the trusted
+    # rotation workflow from the repository's default branch.
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.name == 'Rotate age transport key' &&
+      github.event.workflow_run.head_branch == github.event.repository.default_branch
+    runs-on: ubuntu-slim
+    timeout-minutes: 5
+
+    steps:
+      - name: Check out trusted default-branch workflow files
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - name: Download candidate marker from the triggering run
+        id: marker
+        uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          name: age-pending-month
+          path: ${{ runner.temp }}/age-pending
+          repository: ${{ github.repository }}
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+
+      - name: Validate candidate marker
+        id: candidate
+        shell: 'bash'
+        run: |
+          set -euo pipefail
+
+          marker_dir="${RUNNER_TEMP}/age-pending"
+          if [[ ! -f "${marker_dir}/month" || ! -f "${marker_dir}/previous-month" ]]; then
+            echo 'No staged candidate marker in the triggering run; nothing to verify.'
+            echo 'present=false' >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          month="$(tr -d '\r\n' < "${marker_dir}/month")"
+          previous_month="$(tr -d '\r\n' < "${marker_dir}/previous-month")"
+
+          [[ "${month}" =~ ^(0[1-9]|1[0-2])$ ]] || {
+            echo '::error::Invalid candidate month in artifact.'
+            exit 1
+          }
+          [[ "${previous_month}" =~ ^(0[1-9]|1[0-2])$ ]] || {
+            echo '::error::Invalid previous month in artifact.'
+            exit 1
+          }
+          [[ "${month}" != "${previous_month}" ]] || {
+            echo '::error::Candidate slot must not overwrite the active slot.'
+            exit 1
+          }
+
+          echo "month=${month}" >> "${GITHUB_OUTPUT}"
+          echo "previous_month=${previous_month}" >> "${GITHUB_OUTPUT}"
+          echo 'present=true' >> "${GITHUB_OUTPUT}"
+
+      - name: Download and verify age
+        if: steps.candidate.outputs.present == 'true'
+        shell: 'bash'
+        run: |
+          set -euo pipefail
+          python3 scripts/download-verify-age.py \
+            --version '1.3.2' \
+            --sha256 'cbe24006683f8eb669266162894b9a522a1af52f2665fbc63a4bb032ed26ac10' \
+            --output "${RUNNER_TEMP}/age.tar.gz"
+
+      - name: Extract age
+        if: steps.candidate.outputs.present == 'true'
+        shell: 'bash'
+        run: |
+          set -euo pipefail
+          extract_dir="${RUNNER_TEMP}/age-extract"
+          bin_dir="${RUNNER_TEMP}/age-bin"
+          mkdir -p "${extract_dir}" "${bin_dir}"
+          tar -C "${extract_dir}" -xvpf "${RUNNER_TEMP}/age.tar.gz"
+          install -m 0755 "${extract_dir}/age/age" "${bin_dir}/age"
+          echo "${bin_dir}" >> "${GITHUB_PATH}"
+
+      - name: Verify stored identity and recipient
+        id: verify
+        if: steps.candidate.outputs.present == 'true'
+        shell: 'bash'
+        env:
+          GH_TOKEN: ${{ secrets.AGE_ROTATION_PAT }}
+          REPOSITORY: ${{ github.repository }}
+          MONTH: ${{ steps.candidate.outputs.month }}
+          PREVIOUS_MONTH: ${{ steps.candidate.outputs.previous_month }}
+          PENDING_MONTH: ${{ vars.AGE_KEY_PENDING_MONTH }}
+          AGE_IDENTITY: ${{ secrets[format('AGE_IDENTITY_{0}', steps.candidate.outputs.month)] }}
+          AGE_RECIPIENT: ${{ vars[format('AGE_RECIPIENT_{0}', steps.candidate.outputs.month)] }}
+        run: |
+          set -euo pipefail
+          umask 077
+
+          : "${GH_TOKEN:?AGE_ROTATION_PAT is missing}"
+          : "${AGE_IDENTITY:?Staged identity secret is missing}"
+          : "${AGE_RECIPIENT:?Staged recipient variable is missing}"
+
+          if [[ "${PENDING_MONTH}" != "${MONTH}" ]]; then
+            echo "::error::The pending month does not match this rotation run's artifact."
+            exit 1
+          fi
+
+          work_dir="$(mktemp -d)"
+          cleanup() {
+            rm -r -f "${work_dir}"
+          }
+          trap cleanup EXIT
+          chmod 00700 "${work_dir}"
+
+          identity="${work_dir}/age-identity"
+          plaintext="${work_dir}/age-test-plaintext"
+          ciphertext="${work_dir}/age-test-ciphertext"
+          decrypted="${work_dir}/age-test-decrypted"
+
+          printf '%s' "${AGE_IDENTITY}" > "${identity}"
+          printf 'age verifier test\n' > "${plaintext}"
+
+          age -r "${AGE_RECIPIENT}" -o "${ciphertext}" "${plaintext}"
+          age -d -i "$identity" -o "${decrypted}" "${ciphertext}"
+          cmp "${plaintext}" "${decrypted}"
+
+          echo 'The stored identity decrypts data encrypted to its stored recipient.'
+
+      - name: Activate candidate and prune unused slots
+        if: steps.candidate.outputs.present == 'true'
+        shell: 'bash'
+        env:
+          GH_TOKEN: ${{ secrets.AGE_ROTATION_PAT }}
+          REPOSITORY: ${{ github.repository }}
+          MONTH: ${{ steps.candidate.outputs.month }}
+          PREVIOUS_MONTH: ${{ steps.candidate.outputs.previous_month }}
+        run: |
+          set -euo pipefail
+          : "${GH_TOKEN:?AGE_ROTATION_PAT is missing}"
+
+          pending_month="$(gh variable get AGE_KEY_PENDING_MONTH --repo "${REPOSITORY}" 2>/dev/null || true)"
+          active_month="$(gh variable get AGE_KEY_MONTH --repo "${REPOSITORY}")"
+
+          if [[ "${pending_month}" != "${MONTH}" ]]; then
+            echo '::error::The pending month changed before cutover; refusing to update the pointer.'
+            exit 1
+          fi
+
+          # Allow a retry after the pointer moved but cleanup did not finish.
+          if [[ "${active_month}" != "${PREVIOUS_MONTH}" && "${active_month}" != "${MONTH}" ]]; then
+            echo '::error::AGE_KEY_MONTH changed unexpectedly; refusing to cut over.'
+            exit 1
+          fi
+
+          if [[ "${active_month}" != "${MONTH}" ]]; then
+            gh variable set AGE_KEY_MONTH --repo "${REPOSITORY}" --body "${MONTH}"
+          fi
+
+          # Keep the new active pair and the immediately previous active pair.
+          for slot in {01..12}; do
+            if [[ "${slot}" == "${MONTH}" || "${slot}" == "${PREVIOUS_MONTH}" ]]; then
+              continue
+            fi
+
+            gh secret delete "AGE_IDENTITY_${slot}" --repo "${REPOSITORY}" 2>/dev/null || true
+            gh variable delete "AGE_RECIPIENT_${slot}" --repo "${REPOSITORY}" 2>/dev/null || true
+          done
+
+          # Clear the pending marker last so a failed prune can be safely retried.
+          gh variable delete AGE_KEY_PENDING_MONTH --repo "${REPOSITORY}"
