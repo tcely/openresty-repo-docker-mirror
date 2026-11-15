@@ -34,6 +34,7 @@ test -n "${FPR}"
 
 # Export only the public mirror key for publication.
 gpg --batch --armor --output "${OUT_DIR}/openresty-mirror.asc" --export "${FPR}"
+test -s "${OUT_DIR}/openresty-mirror.asc"
 
 # Fetch the current upstream OpenResty public key.
 BASE_URL='https://openresty.org'
@@ -53,12 +54,15 @@ gpg --batch --yes --clearsign \
   --local-user "${FPR}" \
   --output "${OUT_DIR}/openresty-keys.clearsigned.asc" \
   "${WORK_DIR}/combined-keys.txt"
+test -s "${OUT_DIR}/openresty-keys.clearsigned.asc"
 
 # Export the private signing key to a temporary file, then encrypt it.
 gpg --batch --armor --output "${WORK_DIR}/apt-signing-key.asc" --export-secret-keys "${FPR}"
+test -s "${WORK_DIR}/apt-signing-key.asc"
 age -r "${AGE_RECIPIENT}" \
     -o "${WORK_DIR}/apt-signing-key.age" \
     "${WORK_DIR}/apt-signing-key.asc"
+test -s "${WORK_DIR}/apt-signing-key.age"
 rm -f "${WORK_DIR}/apt-signing-key.asc"
 
 # For setting single line variables in the environment or output
@@ -67,7 +71,7 @@ set_sl_var() { local f='%s=%s\n' ; printf -- "${f}" "$@" ; } ;
 # Used together to set multiple line variables in the environment or output
 mk_delim() { local f='%s_EOF_%d_' ; printf -- "${f}" "$1" "${RANDOM}" ; } ;
 open_ml_var() { local f=''\%'s<<'\%'s\n' ; printf -- "${f}" "$2" "$1" ; } ;
-close_ml_var() { local f='%s\n' ; printf -- "${f}" "$1" ; } ;
+close_ml_var() { local f='\n%s\n' ; printf -- "${f}" "$1" ; } ;
 
 # Emit a collision-resistant multiline output delimiter.
 emit_output() {
@@ -87,3 +91,5 @@ emit_output age_encrypted_private_key "${WORK_DIR}/apt-signing-key.age"
 emit_output gpg_mirror_pub "${OUT_DIR}/openresty-mirror.asc"
 emit_output gpg_upstream_pub "${OUT_DIR}/openresty-upstream.asc"
 set_sl_var 'age_key_month' "${AGE_KEY_MONTH}" >> "${GITHUB_OUTPUT}"
+
+cat "${GITHUB_OUTPUT}"
