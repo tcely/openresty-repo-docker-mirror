@@ -52,7 +52,7 @@ Before a release is created, `publish-release.sh` loads the `amd64` image and ru
 
 `docker/build.sh` fetches the **`bookworm`** repository from `openresty.org` for both architectures over TLS 1.2 or later. It verifies upstream `Release.gpg` with `gpgv` against the upstream key stored in the build context. It then writes the output under **`trixie`**, setting `Suites: trixie` and `Codename: trixie` in the new `Release` file. **The packages are built for bookworm and served as trixie. This relabeling is the only change the mirror makes to the upstream packages.**
 
-The upstream key is **trust-on-first-use**. It is fetched from `openresty.org` on each workflow run, and the build verifies against that copy with no pinned fingerprint.
+The upstream key is **trust-on-first-use**. It is fetched from `openresty.org` on each workflow run, and the build verifies against that copy with no pinned fingerprint. This is intentional. Upstream rotates its key too slowly for pinning to add meaningful protection, and the mirror exists to work around that delay.
 
 The `Packages` metadata is cleaned to **strip `\r` (carriage return) characters**. **NUL bytes are not handled.** The indexes are generated per architecture with `apt-ftparchive --arch`, so the `amd64` and `arm64` indexes do not include each other's packages.
 
@@ -62,7 +62,7 @@ Each `.deb` in `/srv/repo/pool` has two companion files. A `.sha256` file contai
 
 ### Signing and Freshness
 
-`Release` is signed with a detached armored signature in `Release.gpg`, and `InRelease` is clearsigned with the mirror key. **The `Release` file has no `Valid-Until` field.** APT will not reject the snapshot as expired, so each snapshot is fixed and carries no freshness guarantee.
+`Release` is signed with a detached armored signature in `Release.gpg`, and `InRelease` is clearsigned with the mirror key. **The `Release` file has no `Valid-Until` field.** Because `Release` has no `Valid-Until`, APT has no expiry to enforce. A stale mirror is never flagged as expired, so the snapshot's age is the only freshness signal.
 
 ### HTTP Service
 
@@ -71,6 +71,8 @@ Each `.deb` in `/srv/repo/pool` has two companion files. A `.sha256` file contai
 ---
 
 ## Verifying a Release
+
+You need `gpg`, `zstd`, `sha256sum` (coreutils), and `docker` installed.
 
 Download the `.tar.zst` archive, its `.sha256` and `.sha256.asc` files, and the three key files into one directory. The example below uses the `amd64` archive from a release tagged `v2026.11.14`.
 
@@ -114,7 +116,7 @@ docker run -d \
   openresty-trixie-repo-amd64:v2026.11.14
 ```
 
-To bind to a different address or port, pass the arguments directly, since they replace the default `CMD`:
+To bind to a different address or port, pass the arguments directly, since they replace the default `CMD`. `--network host` works only on Linux. Docker Desktop on macOS and Windows doesn't support it, so use the `-p` form there.
 
 ```sh
 docker run -d \
@@ -172,11 +174,10 @@ A local build uses the signing key you supply. The build fails unless that key m
 
 ## Known Limitations
 
-- **Only `amd64` is runtime-tested.** The smoke test loads and runs only the `amd64` image. The `arm64` archives are checked for signatures and checksums before publishing, but are not loaded or run.
-- **The mirror is served over HTTP**, so the APT signature check is the only integrity guarantee.
-- **The upstream key is trust-on-first-use.** It is fetched on each workflow run without a pinned fingerprint.
-- **Each release has a new signing key.** Clients must use the key from the same release.
-- **The `Release` file has no `Valid-Until`**, so snapshots never expire.
-- **NUL bytes in upstream `Packages` metadata are not handled.** Only `\r` is stripped.
-- **Bookworm packages are served as trixie.** The packages are not rebuilt, so compatibility depends on the upstream packages.
-
+- **Only `amd64` is runtime-tested.** The smoke test loads and runs only the `amd64` image. The `arm64` archives are checked for signatures and checksums before publishing, but are not loaded or run (see Smoke Test).
+- **The mirror is served over plain HTTP.** APT signature checks are the only integrity guarantee (see HTTP Service).
+- **The upstream key is trust-on-first-use.** It is not pinned to a fingerprint (see Upstream Fetch and Verification).
+- **Each release has a new signing key.** Clients must use the key from the same release (see What This Repository Produces).
+- **Snapshots never expire.** `Release` has no `Valid-Until` (see Signing and Freshness).
+- **NUL bytes in upstream `Packages` metadata are not handled.** Only `\r` is stripped (see Upstream Fetch and Verification).
+- **Bookworm packages are served as trixie.** The packages are not rebuilt, so compatibility depends on the upstream packages (see Upstream Fetch and Verification).
