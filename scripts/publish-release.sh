@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -euxo pipefail
 
 : "${AGE_ENCRYPTED_PRIVATE_KEY:?AGE_ENCRYPTED_PRIVATE_KEY is required}"
 : "${AGE_IDENTITY:?AGE_IDENTITY is required}"
@@ -40,19 +40,16 @@ FPR="$(gpg --batch --list-secret-keys --with-colons | awk -F: '/^fpr:/ { print $
 test -n "${FPR}"
 
 printf '%s\n' 'docker build'
-docker build --help
+docker build --help || :
 printf '%s\n' '' ''
 
 printf '%s\n' 'docker buildx build'
-docker buildx build --help
+docker buildx build --help || :
 printf '%s\n' '' ''
 
 # Package each architecture rootfs into a Docker tar archive, checksum, compress, and sign.
 for arch in amd64 arm64; do
     SRC_DIR="${ROOTFS_DIR}/linux_${arch}"
-    if [ ! -d "${SRC_DIR}" ]; then
-        SRC_DIR="${ROOTFS_DIR}"
-    fi
     test -s "${SRC_DIR}/repo-artifact.tar"
     cp -v -t docker/ "${SRC_DIR}/repo-artifact.tar"
 
