@@ -25,20 +25,11 @@ jobs:
         shell: 'bash'
         run: printf 'tag=v%s\n' "$(date -u +%Y.%m.%d)" >> "${GITHUB_OUTPUT}"
 
-      - name: Download and verify age
-        shell: 'bash'
-        run: |
-          set -euo pipefail
-          python3 scripts/download-verify-age.py \
-            --version '1.3.2' \
-            --sha256 'cbe24006683f8eb669266162894b9a522a1af52f2665fbc63a4bb032ed26ac10' \
-            --output "${RUNNER_TEMP}/age.tar.gz"
-
-          mkdir -p "${RUNNER_TEMP}/age-extract" "${RUNNER_TEMP}/age-bin"
-          tar -C "${RUNNER_TEMP}/age-extract" -xvpf "${RUNNER_TEMP}/age.tar.gz"
-          install -m 0755 "${RUNNER_TEMP}/age-extract/age/age" "${RUNNER_TEMP}/age-bin/age"
-          install -m 0755 "${RUNNER_TEMP}/age-extract/age/age-keygen" "${RUNNER_TEMP}/age-bin/age-keygen"
-          echo "${RUNNER_TEMP}/age-bin" >> "${GITHUB_PATH}"
+      - name: Install age
+        id: 'age'
+        uses: ./.github/actions/setup-age
+        with:
+          keygen: true
 
       - name: Generate, encrypt, and export signing keys
         id: keygen
@@ -115,19 +106,9 @@ jobs:
           merge-multiple: true
           path: ${{ steps.stage.outputs.rootfs_dir }}
 
-      - name: Download and verify age
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 scripts/download-verify-age.py \
-            --version '1.3.2' \
-            --sha256 'cbe24006683f8eb669266162894b9a522a1af52f2665fbc63a4bb032ed26ac10' \
-            --output "${RUNNER_TEMP}/age.tar.gz"
-
-          mkdir -p "${RUNNER_TEMP}/age-extract" "${RUNNER_TEMP}/age-bin"
-          tar -C "${RUNNER_TEMP}/age-extract" -xvpf "${RUNNER_TEMP}/age.tar.gz"
-          install -m 0755 "${RUNNER_TEMP}/age-extract/age/age" "${RUNNER_TEMP}/age-bin/age"
-          echo "${RUNNER_TEMP}/age-bin" >> "${GITHUB_PATH}"
+      - name: Install age
+        id: 'age'
+        uses: ./.github/actions/setup-age
 
       - name: Package, checksum, sign, verify, and publish immutable release
         shell: 'bash'
