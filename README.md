@@ -1,118 +1,135 @@
 # openresty-repo-docker-mirror
-Snapshots of the upstream repository signed by an ephemeral key
 
-## OpenResty Debian Trixie Mirror Snapshots
-
-Automated weekly snapshots of the official OpenResty APT repository (`amd64` and `arm64`), cryptographically verified against OpenResty's upstream signing key, re-indexed as a Debian **Trixie** (`Suites: trixie`) repository, and signed with an ephemeral **RSA 3072** OpenPGP key.
-
-Each weekly GitHub Release provides a self-contained, multi-architecture `python:3.15-slim-trixie` Docker image serving the signed repository over HTTP, paired with the exact public signing keys and detached-signed checksums needed to verify and restore the snapshot at any point in the future.
+Weekly signed snapshots of the official OpenResty APT repository for Debian Trixie, `amd64` and `arm64`, packaged as `python:3.15-slim-trixie` Docker images.
 
 ---
 
-### Repository Structure
+## What This Repository Produces
 
-```text
-.
-├── .github/
-│   └── workflows/
-│       └── weekly-release.yml   # Weekly build, verification, and immutable release workflow
-├── docker/
-│   ├── .dockerignore            # Allows only Dockerfile, openresty-mirror.asc, and openresty-upstream.asc
-│   └── Dockerfile               # Multi-stage upstream verifier, Trixie indexer, and HTTP server
-├── .gitignore                   # Ignores transient docker/*.asc keys during local builds
-└── README.md
-```
+Every Tuesday at 18:03 UTC, a workflow fetches the upstream OpenResty repository, verifies it, re-indexes it under the `trixie` suite, and signs the index with a freshly generated RSA 3072 key. It then publishes a GitHub Release tagged `vYYYY.MM.DD`. Each release contains a Docker image archive that serves the signed repository over HTTP, along with the public keys and checksums needed to verify and restore it.
 
----
+**Each release is signed by a different key.** A new signing key is generated on every workflow run, so clients must install the `openresty-mirror.asc` from the same release they are installing packages from. A key from an earlier release will not validate later snapshots.
 
 ### Release Assets
 
-Every weekly release (`vYYYY.MM.DD`) attaches the following immutable assets:
+The image archive is published as `openresty-trixie-repo-<arch>-<tag>.tar.zst`, compressed with `zstd -11`. Its checksum and signature files are `.tar.zst.sha256` and `.tar.zst.sha256.asc`.
 
-| Asset | Description |
-| :--- | :--- |
-| `openresty-trixie-repo-*.tar.zst` | Multi-stage `python:3.15-slim-trixie` Docker image archive compressed with `zstd` (`-19`). |
-| `openresty-trixie-repo-*.tar.zst.sha256` | Tagged SHA-256 checksum (`SHA256 (...) = ...`) of the `.tar.zst` archive. |
-| `openresty-trixie-repo-*.tar.zst.sha256.asc` | Detached ASCII-armored GPG signature of the `.tar.zst.sha256` file. |
-| `openresty-trixie-repo-*.tar.sha256` | Tagged SHA-256 checksum of the uncompressed `.tar` image archive. |
-| `openresty-trixie-repo-*.tar.sha256.asc` | Detached ASCII-armored GPG signature of the `.tar.sha256` file. |
-| `openresty-mirror.asc` | Ephemeral RSA 3072 public key used to sign the Trixie repository (`Signed-By:` compatible). |
-| `openresty-upstream.asc` | Upstream OpenResty public key used to verify origin packages at build time. |
-| `openresty-keys.clearsigned.asc` | Clearsigned bundle containing both `openresty-mirror.asc` and `openresty-upstream.asc`. |
+The release also includes `openresty-trixie-repo-<arch>-<tag>.tar.sha256` and `.tar.sha256.asc`, which cover the uncompressed `.tar`. **The `.tar.sha256` and `.tar.sha256.asc` files are published without their `.tar` files.** The `.tar` is deleted after compression, so you must decompress the `.tar.zst` to recreate it before checking the `.tar.sha256` file.
+
+The public keys `openresty-mirror.asc` (the signing key), `openresty-upstream.asc` (OpenResty's key), and `openresty-keys.clearsigned.asc` (a clearsigned bundle containing both) are attached to each release. The mirror public key and the upstream public key are also embedded in the image.
+
+Releases are immutable. Once published, their assets cannot be changed.
 
 ---
 
-### Restoring and Verifying a Release
+## Build Pipeline
 
-#### Verify Checksums and Signatures
+The workflow `.github/workflows/weekly-release.yml` runs on a weekly cron (`3 18 * * 2`) and executes three jobs in order.
 
-Import `openresty-mirror.asc` into an isolated temporary keyring, verify both signed `.sha256` files, and validate the compressed and uncompressed archives:
+1. **`prepare-key`** runs `scripts/prepare-keys.sh` on `ubuntu-slim`. It generates an RSA 3072 sign-only key with no expiration in a temporary `GNUPGHOME`, fetches the upstream key from `https://openresty.org/package/pubkey.gpg`, and creates the clearsigned bundle `openresty-keys.clearsigned.asc`. It exports the private key, mirror public key, and upstream public key as job outputs, which are passed to later jobs. The three key files are also uploaded as a workflow artifact.
+2. **`build`** calls the reusable `docker/github-builder` workflow with `target: 'artifact'`, `output: local`, and `platforms: linux/amd64,linux/arm64`. The private signing key is passed to the build as the `apt_signing_key` BuildKit secret.
+3. **`publish-release`** runs `scripts/publish-release.sh` on `ubuntu-latest`. It builds the release images, runs the smoke test, compresses and checksums the archives, signs them, and verifies them. It then creates a draft release, uploads the assets, and publishes the release, which makes it immutable.
+
+### Build Paths
+
+Both Dockerfile targets produce the same final image. The release workflow uses the `artifact` path because the reusable Docker builder workflow requires an artifact archive for Debian images.
+
+The `artifact` target of `docker/Dockerfile` contains only `/repo-artifact.tar`, a tarball of `etc/apt` and `srv` produced by the `artifact-builder` stage. `scripts/publish-release.sh` copies that tarball into `docker/` and builds the release image with `docker/Dockerfile.from-artifact`. This is the path used for every published release.
+
+The `final` target of `docker/Dockerfile` builds directly from `repo-builder` without the tarball. It is the direct path to the same image and is used for local builds.
+
+Both images run as `65534:65534`, expose port 8080, declare `VOLUME ["/srv/repo"]`, and start with `ENTRYPOINT ["python3", "-m", "http.server", "--directory", "/srv/repo"]`.
+
+### Smoke Test
+
+Before a release is created, `publish-release.sh` loads the `amd64` image and runs it on port 8090 using `python:3.15-slim-trixie`. The smoke test runs `apt-get update` against the repository configuration in the image, which confirms that the signed index, the keys, and the source configuration work together. Only `amd64` is tested.
+
+---
+
+## Repository Mirror Details
+
+### Upstream Fetch and Verification
+
+`docker/build.sh` imports the `apt_signing_key` secret and fetches the **`bookworm`** repository from `openresty.org` for both architectures. It verifies upstream `Release.gpg` against the upstream key, then writes the output under **`trixie`**, setting `Suites: trixie` and `Codename: trixie` in the new `Release` file. **The packages are built for bookworm and served as trixie. This relabeling is the only change the mirror makes to the upstream packages.**
+
+The upstream key is **trust-on-first-use**. It is fetched from `openresty.org` on each workflow run, and the build verifies against that copy with no pinned fingerprint.
+
+The `Packages` metadata is cleaned to **strip `\r` (carriage return) characters**. **NUL bytes are not handled.** The indexes are generated per architecture with `apt-ftparchive --arch`, so the `amd64` and `arm64` indexes do not include each other's packages.
+
+### Files Shipped in the Pool
+
+Each `.deb` in `/srv/repo/pool` has two companion files. A `.sha256` file contains the expected checksum, and a `.url` file records the upstream source URL. The `.sha256` files use absolute build-container paths (`/srv/repo/pool/...`), so they will only pass `sha256sum -c` after the paths are adjusted or the pool is restored to that location.
+
+### Signing and Freshness
+
+`Release` is signed with a detached armored signature in `Release.gpg`, and `InRelease` is clearsigned with the mirror key. **The `Release` file has no `Valid-Until` field.** APT will not reject the snapshot as expired, so each snapshot is fixed and carries no freshness guarantee.
+
+### HTTP Service
+
+**The mirror is served over plain HTTP** by Python's `http.server`. Integrity depends on the APT signature check, not on transport security, so the signing key must be installed from a trusted copy, such as the release assets or the copy embedded in the image.
+
+---
+
+## Verifying a Release
+
+Download the `.tar.zst` archive, its `.sha256` and `.sha256.asc` files, and the three key files into one directory. The example below uses the `amd64` archive from a release tagged `v2026.11.14`.
 
 ```sh
 set -euo pipefail
+
+TAG=v2026.11.14
+BASE="openresty-trixie-repo-amd64-${TAG}"
 
 WORK_DIR="$(mktemp -d)"
 trap 'rm -rf "${WORK_DIR}"' EXIT
 export GNUPGHOME="${WORK_DIR}/gnupg"
 mkdir -m 0700 "${GNUPGHOME}"
 
-# Import the release's mirror public key and verify the clearsigned key bundle
 gpg --batch --import openresty-mirror.asc
-gpg --batch --decrypt openresty-keys.clearsigned.asc >/dev/null
+gpg --batch --verify openresty-keys.clearsigned.asc
 
-# Verify and check the compressed .tar.zst archive
-gpg --batch --verify openresty-trixie-repo.tar.zst.sha256.asc openresty-trixie-repo.tar.zst.sha256
-sha256sum -c openresty-trixie-repo.tar.zst.sha256
+gpg --batch --verify "${BASE}.tar.zst.sha256.asc" "${BASE}.tar.zst.sha256"
+sha256sum -c "${BASE}.tar.zst.sha256"
 
-# Verify signature on the inner .tar checksum, decompress, check digest, and load into Docker
-gpg --batch --verify openresty-trixie-repo.tar.sha256.asc openresty-trixie-repo.tar.sha256
-zstd -d -c openresty-trixie-repo.tar.zst > "${WORK_DIR}/openresty-trixie-repo.tar"
-(
-  cd "${WORK_DIR}"
-  sha256sum -c "${OLDPWD}/openresty-trixie-repo.tar.sha256"
-)
+zstd -d -c "${BASE}.tar.zst" > "${BASE}.tar"
+gpg --batch --verify "${BASE}.tar.sha256.asc" "${BASE}.tar.sha256"
+sha256sum -c "${BASE}.tar.sha256"
 
-docker load -i "${WORK_DIR}/openresty-trixie-repo.tar"
+docker load -i "${BASE}.tar"
+rm -f "${BASE}.tar"
 ```
+
+After loading, the image is named `openresty-trixie-repo-amd64:v2026.11.14`.
 
 ---
 
-### Running the Repository Container
+## Running the Container
 
-The container runs as unprivileged user `65534:65534` and uses `python3 -m http.server --directory /srv/repo` as its `ENTRYPOINT`, defaulting to `--bind 0.0.0.0 8080`.
-
-#### Default Bind (`0.0.0.0:8080`)
+The container runs as `65534:65534`. Its default command binds to `0.0.0.0` on port 8080.
 
 ```sh
 docker run -d \
   --name openresty-repo \
   -p 8080:8080 \
-  openresty-trixie-repo:v2026.11.14
+  openresty-trixie-repo-amd64:v2026.11.14
 ```
 
-#### Custom Bind Address and Port
-
-Override `CMD` arguments directly to bind to a specific interface or port:
+To bind to a different address or port, pass the arguments directly, since they replace the default `CMD`:
 
 ```sh
 docker run -d \
   --name openresty-repo \
   --network host \
-  openresty-trixie-repo:v2026.11.14 --bind 127.0.0.1 9000
+  openresty-trixie-repo-amd64:v2026.11.14 --bind 127.0.0.1 9000
 ```
 
-#### Exposed Paths & Volume
-
-* **APT Repository Root**: `http://<host>:8080/` (`dists/trixie/...` and `pool/openresty/...`)
-* **Mirror Public Key**: `http://<host>:8080/openresty-mirror.asc` (also stored at `/etc/apt/keyrings/openresty-mirror.asc` inside the image)
-* **Upstream Public Key**: `http://<host>:8080/openresty-upstream.asc` (also stored at `/etc/apt/keyrings/openresty-upstream.asc` inside the image)
-* **Volume**: `/srv/repo` is declared as a `VOLUME` if you want to mount or inspect the repository tree directly.
+The repository is served from the root (`dists/trixie/...` and `pool/openresty/...`). The public keys are available at `/openresty-mirror.asc` and `/openresty-upstream.asc`, and they are installed in `/etc/apt/keyrings` inside the image.
 
 ---
 
-### Configuring a Debian Trixie Client
+## Configuring a Debian Trixie Client
 
-Install `openresty-mirror.asc` into `/etc/apt/keyrings/` (either from the release artifact or directly from the running container) and add a DEB822 `.sources` file:
+Install the mirror key from the same release as the packages you are installing, into `/etc/apt/keyrings`, and add a DEB822 source file that points to the running container:
 
 ```sh
 install -d -m 0755 -o 0 -g 0 /etc/apt/keyrings
@@ -120,7 +137,7 @@ install -m 0644 -o 0 -g 0 openresty-mirror.asc /etc/apt/keyrings/openresty-mirro
 
 cat <<'EOF' > /etc/apt/sources.list.d/openresty.sources
 Types: deb
-URIs: http://openresty-repo:8080
+URIs: http://<host>:8080
 Suites: trixie
 Components: openresty
 Signed-By: /etc/apt/keyrings/openresty-mirror.asc
@@ -131,15 +148,34 @@ apt-get update
 apt-get install -y --no-install-recommends openresty
 ```
 
+Replace `<host>` with the address of the machine running the container.
+
 ---
 
-### How the Build Pipeline Works
+## Building Locally
 
-1. **Ephemeral Key Generation (`prepare-key` on `ubuntu-slim`)**: Generates a non-expiring RSA 3072 signing keypair in a temporary `GNUPGHOME`, fetches OpenResty's upstream public key, and creates `openresty-keys.clearsigned.asc`.
-2. **Upstream Verification & Multi-Arch Build (`build` via `docker/github-builder`)**:
-   * Stages `openresty-mirror.asc` and `openresty-upstream.asc` into the `./docker` build context (filtered via `docker/.dockerignore`) and passes the ephemeral private key via BuildKit `--mount=type=secret` so it is never written to image layers.
-   * Verifies upstream `Release` signatures with `gpgv` against `openresty-upstream.asc` and checks every `Packages.gz` and `.deb` SHA-256 digest before indexing `Suites: trixie` (`amd64` + `arm64`) and signing `Release` / `InRelease`.
-3. **End-to-End Test & Immutable Release (`publish-release` on `ubuntu-latest`)**:
-   * Generates tagged `.sha256` files (`sha256sum --tag`) and detached `.asc` signatures for both `.tar` and `.tar.zst` (`zstd -T0 -19`).
-   * Boots the built container and runs `apt-get update` inside a fresh `python:3.15-slim-trixie` container to verify Trixie `sqv` signature acceptance before creating a draft release (`--draft`) and publishing it as immutable (`--draft=false`).
+To build the `final` target directly, provide the three secrets that the release workflow uses:
 
+```sh
+docker buildx build \
+  --target final \
+  --secret id=apt_signing_key,src=mirror-private.asc \
+  --secret id=openresty_mirror_pub,src=openresty-mirror.asc \
+  --secret id=openresty_upstream_pub,src=openresty-upstream.asc \
+  -t openresty-trixie-repo-local \
+  ./docker
+```
+
+A local build creates its own signing key, so its `Release` signatures will not match a published release.
+
+---
+
+## Known Limitations
+
+- **Only `amd64` is runtime-tested.** The smoke test loads and runs only the `amd64` image. The `arm64` image is built but not run.
+- **The mirror is served over HTTP**, so the APT signature check is the only integrity guarantee.
+- **The upstream key is trust-on-first-use.** It is fetched on each workflow run without a pinned fingerprint.
+- **Each release has a new signing key.** Clients must use the key from the same release.
+- **The `Release` file has no `Valid-Until`**, so snapshots never expire.
+- **NUL bytes in upstream `Packages` metadata are not handled.** Only `\r` is stripped.
+- **Bookworm packages are served as trixie.** The packages are not rebuilt, so compatibility depends on the upstream packages.
