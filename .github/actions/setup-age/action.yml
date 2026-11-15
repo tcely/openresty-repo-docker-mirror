@@ -1,6 +1,10 @@
 name: Setup age
 description: Download, verify, extract age; then add to PATH
 inputs:
+  arch:
+    required: false
+    default: 'amd64'
+    description: Which architecture should be downloaded?
   checksum:
     required: false
     default: 'cbe24006683f8eb669266162894b9a522a1af52f2665fbc63a4bb032ed26ac10'
@@ -43,6 +47,7 @@ runs:
       id: 'install'
       shell: 'bash'
       env:
+        INPUT_ARCH: '${{ inputs.arch }}'
         INPUT_CHECKSUM: '${{ inputs.checksum }}'
         INPUT_KEYGEN: '${{ inputs.keygen }}'
         INPUT_VERSION: '${{ inputs.version }}'
@@ -52,6 +57,7 @@ runs:
         set -euo pipefail
 
         python3 "${GITHUB_ACTION_PATH}"/download-verify-age.py \
+            --arch "${INPUT_ARCH}" \
             --version "${INPUT_VERSION}" \
             --sha256 "${INPUT_CHECKSUM}" \
             --output "${work_dir}/age.tar.gz"
