@@ -1,0 +1,62 @@
+name: Rotate age transport key
+
+on:
+  schedule:
+    # Monthly, at a time chosen to avoid the weekly release window.
+    - cron: "23 5 1 * *"
+  workflow_dispatch:
+
+# The workflow uses the PAT, not GITHUB_TOKEN.
+permissions: {}
+
+concurrency:
+  group: age-key-rotation
+  cancel-in-progress: false
+
+jobs:
+  rotate:
+    # Do not expose the PAT to a manually dispatched run from another branch.
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Install age
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes age
+
+      - name: Generate, test, and store new age identity
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.AGE_ROTATION_PAT }}
+        run: |
+          set -euo pipefail
+          umask 077
+
+          : "${GH_TOKEN:?AGE_ROTATION_PAT repository secret is missing}"
+
+          identity_file="$RUNNER_TEMP/age-identity"
+          recipient_file="$RUNNER_TEMP/age-recipient"
+          plaintext_file="$RUNNER_TEMP/age-test-plaintext"
+          ciphertext_file="$RUNNER_TEMP/age-test-ciphertext"
+          decrypted_file="$RUNNER_TEMP/age-test-decrypted"
+
+          trap 'rm -f "$identity_file" "$recipient_file" \
+            "$plaintext_file" "$ciphertext_file" "$decrypted_file"' EXIT
+
+          age-keygen -o "$identity_file"
+          age-keygen -y "$identity_file" > "$recipient_file"
+
+          # Check that this identity and recipient match before storing either.
+          printf 'age rotation test\n' > "$plaintext_file"
+          age -r "$(cat "$recipient_file")" \
+            -o "$ciphertext_file" "$plaintext_file"
+          age -d -i "$identity_file" \
+            -o "$decrypted_file" "$ciphertext_file"
+          cmp "$plaintext_file" "$decrypted_file"
+
+          # These are separate updates. Run rotation when no release is active.
+          gh secret set AGE_IDENTITY \
+            --repo "$GITHUB_REPOSITORY" < "$identity_file"
+          gh variable set AGE_RECIPIENT \
+            --repo "$GITHUB_REPOSITORY" < "$recipient_file"
