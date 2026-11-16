@@ -129,7 +129,7 @@ do
         --max-tries=5 \
         --retry-wait=2
 
-    find /srv/repo/pool -name '*.sha256' -exec cat '{}' + | sha256sum --quiet -c -w --strict
+    find /srv/repo/pool -name '*.sha256' -exec cat '{}' + | sha256sum -c --strict --quiet
 
     rm -rf "${ARCH_TMP}"
 
