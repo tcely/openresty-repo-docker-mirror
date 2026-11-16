@@ -90,8 +90,8 @@ jobs:
         id: stage
         shell: 'bash'
         run: |
-          echo "assets_dir=$(mktemp -d 'release-assets.XXXXXX')" >> "${GITHUB_OUTPUT}"
-          echo "rootfs_dir=$(mktemp -d 'rootfs.XXXXXX')" >> "${GITHUB_OUTPUT}"
+          echo "assets_dir=$(mktemp -d --tmpdir 'release-assets.XXXXXX')" >> "${GITHUB_OUTPUT}"
+          echo "rootfs_dir=$(mktemp -d --tmpdir 'rootfs.XXXXXX')" >> "${GITHUB_OUTPUT}"
 
       - name: Download keyring artifacts
         uses: actions/download-artifact@v8
