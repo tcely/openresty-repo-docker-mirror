@@ -2,10 +2,6 @@
 
 ## Pending
 
-- [ ] **Fix `publish-release.sh` clearsigned bundle check.** The current check uses `gpg --decrypt`, which does not verify the signature.
-  1. Replace the three lines that run `gpg --batch --decrypt -o .output`, `cat -v .output`, and `rm -f .output` with `gpg --batch --verify openresty-keys.clearsigned.asc`.
-  2. Rely on `set -e` so that a bad signature exits non-zero and stops the release.
-
 - [ ] **Extend `.gitignore`.** Several generated files are not ignored yet.
   1. Add `*.tar`, `*.tar.zst`, `*.sha256`, `*.sha256.asc`, `*.url`, `*.key`, `*.sec`, `*.gpg`, `/dists/`, `/pool/`, and `/gnupg/`.
   2. Keep the existing `docker/openresty-*.asc` and `docker/*.tar` entries, and keep the public keys tracked.
@@ -16,13 +12,10 @@
   2. Verify from the pool directory with `cd pool/openresty/<dir> && sha256sum -c <name>.deb.sha256`.
   3. Note the change in the file format in the release notes, since anyone parsing these files will be affected.
 
-- [x] **Move the signing key out of GitHub job outputs.** The private key currently passes from `prepare-key` to `build` as the `apt_signing_key` secret, and to `publish-release` as the `GPG_PRIVATE_KEY` environment variable. It is also exported as a job output. The decision is to sign APT metadata in `build` and the release tar checksums in `publish-release`, because `docker save` runs in that job. Both jobs therefore need the key.
-  1. Remove the private key from the `prepare-key` job outputs.
-  2. Store the private key as an environment-scoped secret, restricted to the release workflow.
-  3. Give each job that needs the key access to that secret directly, so the key never appears in run data.
-  4. Update the README's Build Pipeline and Known Limitations sections when this is done.
-
 ## Done
+
+- [x] **Move the signing key out of GitHub job outputs.** The private key currently passes from `prepare-key` to `build` as the `apt_signing_key` secret, and to `publish-release` as the `GPG_PRIVATE_KEY` environment variable. It is also exported as a job output. The decision is to sign APT metadata in `build` and the release tar checksums in `publish-release`, because `docker save` runs in that job. Both jobs therefore need the key.
+  - Implemented: `age` encryption is used to protect the private key in the `prepare-key` job outputs.
 
 - [x] **Add README verification prerequisites.** The README lists the tools needed for verification.
   - Implemented: the README's Verifying a Release section lists `gpg`, `zstd`, `sha256sum`, and `docker`.
