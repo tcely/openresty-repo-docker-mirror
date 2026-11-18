@@ -23,7 +23,7 @@ jobs:
       - name: Set weekly release tag
         id: meta
         shell: 'bash'
-        run: printf 'tag=v%s\n' "$(date -u +%Y.%m.%d)" >> "${GITHUB_OUTPUT}"
+        run: printf 'tag=v%s\n' "$(date -u +%Y.0%m.%d)" >> "${GITHUB_OUTPUT}"
 
       - name: Install age
         id: 'age'

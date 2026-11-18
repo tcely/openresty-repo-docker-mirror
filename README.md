@@ -6,7 +6,7 @@ Weekly signed snapshots of the official OpenResty APT repository for Debian Trix
 
 ## What This Repository Produces
 
-Every Tuesday at 18:03 UTC, a workflow fetches the upstream OpenResty repository, verifies it, re-indexes it under the `trixie` suite, and signs the index with a freshly generated RSA 3072 key. It then publishes a GitHub Release tagged `vYYYY.MM.DD`. Each release contains a Docker image archive that serves the signed repository over HTTP, along with the public keys and checksums needed to verify and restore it.
+Every Tuesday at 18:03 UTC, a workflow fetches the upstream OpenResty repository, verifies it, re-indexes it under the `trixie` suite, and signs the index with a freshly generated RSA 3072 key. It then publishes a GitHub Release tagged `vYYYY.0MM.DD`. Each release contains a Docker image archive that serves the signed repository over HTTP, along with the public keys and checksums needed to verify and restore it.
 
 **Each release is signed by a different key.** A new signing key is generated on every workflow run, so clients must install the `openresty-mirror.asc` from the same release they are installing packages from. A key from an earlier release will not validate later snapshots.
 
