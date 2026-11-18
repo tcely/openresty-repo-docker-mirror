@@ -26,7 +26,7 @@ PRIVATE_KEY_FILE="${WORK_DIR}/apt-signing-key.asc"
 
 ( set +x ; printf '%s\n' "${AGE_IDENTITY}" >| "${IDENTITY_FILE}" )
 chmod 00600 "${IDENTITY_FILE}"
-( set +x ; printf '%s' "${AGE_ENCRYPTED_PRIVATE_KEY}" >| "${CIPHERTEXT_FILE}" )
+( set +x ; printf '%s\n' "${AGE_ENCRYPTED_PRIVATE_KEY}" >| "${CIPHERTEXT_FILE}" )
 chmod 00600 "${CIPHERTEXT_FILE}"
 
 age -d -i "${IDENTITY_FILE}" -o "${PRIVATE_KEY_FILE}" "${CIPHERTEXT_FILE}"
