@@ -30,6 +30,11 @@
 
 ## Pending
 
+- [ ] Make the generated `Release` date reproducible from the verified upstream metadata.
+     1. **Suggested change:** In `docker/build.sh`, after verifying both architecture-specific upstream `Release` files, extract and validate each `Date` field, compare the parsed timestamps, and preserve the original field from the later-dated file.
+     2. Fail the build if either date is missing or invalid.
+     3. Pass that value explicitly to `apt-ftparchive` using `APT::FTPArchive::Release::Date`.
+
 - [ ] **Extend `.gitignore`.** Several generated files are not ignored yet.
   1. Add `*.tar`, `*.tar.zst`, `*.sha256`, `*.sha256.asc`, `*.url`, `*.key`, `*.sec`, `*.gpg`, `/dists/`, `/pool/`, and `/gnupg/`.
   2. Keep the existing `docker/openresty-*.asc` and `docker/*.tar` entries, and keep the public keys tracked.
