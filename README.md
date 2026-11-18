@@ -24,15 +24,15 @@ Releases are immutable. Once published, their assets cannot be changed.
 
 ## Build Pipeline
 
-The workflow `.github/workflows/weekly-release.yml` runs on a weekly cron (`3 18 * * 2`). It can also be started manually with `workflow_dispatch`. It executes three jobs in order.
+The workflow `.github/workflows/weekly-release.yml` runs on a weekly cron (`13 18 * * 2`). It can also be started manually with `workflow_dispatch`. It executes three jobs in order.
 
-1. **`prepare-key`** runs on `ubuntu-slim`. It runs `scripts/prepare-keys.sh`, which generates an RSA 3072 sign-only key with no expiration in a temporary `GNUPGHOME`, fetches the upstream key from `https://openresty.org/package/pubkey.gpg`, and creates the clearsigned bundle `openresty-keys.clearsigned.asc`. It exports the private key, mirror public key, and upstream public key as job outputs, which are passed to later jobs. The three key files are also uploaded as a workflow artifact.
-2. **`build`** calls the reusable `docker/github-builder` workflow with `target: 'artifact'`, `output: local`, and `platforms: linux/amd64,linux/arm64`. The private signing key and both public keys are passed to the build as the BuildKit secrets `apt_signing_key`, `openresty_mirror_pub`, and `openresty_upstream_pub`.
-3. **`publish-release`** runs on `ubuntu-latest`. It runs `scripts/publish-release.sh`, which packages each architecture's archive, compresses it, creates checksums and signatures, verifies them, runs the smoke test on `amd64`, and creates a draft release. It publishes the draft only after every asset is uploaded and verified. Releases are immutable, so a tag that already exists can't be reused. If the run fails after the draft is created, for example because the tag already exists, the draft remains and a maintainer must delete it manually before the workflow can create a release for that date.
+1. **`prepare-key`** runs on `ubuntu-slim`. It runs `scripts/prepare-keys.sh`, which generates an RSA 3072 sign-only key with no expiration in a temporary `GNUPGHOME`, fetches the upstream key from `https://openresty.org/package/pubkey.gpg`, and creates the clearsigned bundle `openresty-keys.clearsigned.asc`. It exports the `age` encrypted mirror private key, mirror public key, and upstream public key as job outputs, which are passed to later jobs. The clear signed bundle and the two public key files are also uploaded as a workflow artifact.
+2. **`build`** calls the reusable `docker/github-builder` workflow with `target: 'artifact'`, `output: local`, and `platforms: linux/amd64,linux/arm64`. The `age` encrypted private signing key and both public keys are passed to the build as the BuildKit secrets `apt_signing_key_age`, `openresty_mirror_pub`, and `openresty_upstream_pub`.
+3. **`publish-release`** runs on `ubuntu-latest`. It runs `scripts/publish-release.sh`, which packages each architecture's archive, compresses it, creates checksums and signatures, verifies them, runs the smoke test on `amd64`, and creates a draft release. It publishes the draft only after every asset is uploaded and verified. Releases are immutable, so a tag that already exists can't be reused. If the run fails after the draft is created, for example because the immutable release already exists, the draft remains available to the maintainer.
 
 ### Build Paths
 
-Both Dockerfile targets produce the same final image. The release workflow uses the `artifact` path because the reusable Docker builder workflow requires an artifact archive for Debian images.
+Both Dockerfile targets produce the same final image. The release workflow uses the `artifact` path because the reusable Docker builder workflow requires an artifact archive for images based on Debian.
 
 The `artifact` target of `docker/Dockerfile` contains only `/repo-artifact.tar`, a tarball of `etc/apt` and `srv` produced by the `artifact-builder` stage. `scripts/publish-release.sh` copies that tarball into `docker/` and builds the release image with `docker/Dockerfile.from-artifact`. This is the path used for every published release.
 
@@ -52,7 +52,7 @@ Before a release is created, `publish-release.sh` loads the `amd64` image and ru
 
 `docker/build.sh` fetches the **`bookworm`** repository from `openresty.org` for both architectures over TLS 1.2 or later. It verifies the upstream `Release.gpg` with `gpgv` against the upstream key stored in the build context. It then writes the output under **`trixie`**, setting `Suites: trixie` and `Codename: trixie` in the new `Release` file. **The packages are built for bookworm and served as trixie. This relabeling is the only change the mirror makes to the upstream packages.**
 
-The upstream key is **trust-on-first-use**. It is fetched from `openresty.org` on each workflow run, and the build verifies against that copy with no pinned fingerprint. This is intentional. Upstream rotates its key too slowly for pinning to add meaningful protection, and the mirror exists to work around that delay.
+The upstream key is **always trusted**. It is fetched from `openresty.org` on each workflow run, and the build verifies against that copy with no pinned fingerprint. This is intentional.
 
 The `Packages` metadata is cleaned to **strip `\r` (carriage return) characters**. **NUL bytes are not handled.** The indexes are generated per architecture with `apt-ftparchive --arch`, so the `amd64` and `arm64` indexes do not include each other's packages.
 
@@ -74,12 +74,12 @@ Each `.deb` in `/srv/repo/pool` has two companion files. A `.sha256` file contai
 
 You need `gpg`, `zstd`, `sha256sum` (coreutils), and `docker` installed on the host.
 
-Download the `.tar.zst` archive, its `.sha256` and `.sha256.asc` files, and the three key files into one directory. The example below uses the `amd64` archive from a release tagged `v2026.11.14`.
+Download the `.tar.zst` archive, its `.sha256` and `.sha256.asc` files, and the three key files into one directory. The example below uses the `amd64` archive from a release tagged `v2026.11.18`.
 
 ```sh
 set -euo pipefail
 
-TAG=v2026.11.14
+TAG=v2026.11.18
 BASE="openresty-trixie-repo-amd64-${TAG}"
 
 WORK_DIR="$(mktemp -d)"
@@ -88,20 +88,19 @@ export GNUPGHOME="${WORK_DIR}/gnupg"
 mkdir -m 0700 "${GNUPGHOME}"
 
 gpg --batch --import openresty-mirror.asc
-gpg --batch --verify openresty-keys.clearsigned.asc
 
 gpg --batch --verify "${BASE}.tar.zst.sha256.asc" "${BASE}.tar.zst.sha256"
-sha256sum -c "${BASE}.tar.zst.sha256"
+sha256sum --check --strict --warn "${BASE}.tar.zst.sha256"
 
 zstd -d -c "${BASE}.tar.zst" > "${BASE}.tar"
 gpg --batch --verify "${BASE}.tar.sha256.asc" "${BASE}.tar.sha256"
-sha256sum -c "${BASE}.tar.sha256"
+sha256sum --check --strict --warn "${BASE}.tar.sha256"
 
 docker load -i "${BASE}.tar"
 rm -f "${BASE}.tar"
 ```
 
-After loading, the image is named `openresty-trixie-repo-amd64:v2026.11.14`.
+After loading, the image is named `openresty-trixie-repo-amd64:v2026.11.18`.
 
 ---
 
@@ -113,7 +112,7 @@ The container runs as `65534:65534`. Its default command binds to `0.0.0.0` on p
 docker run -d \
   --name openresty-repo \
   -p 8080:8080 \
-  openresty-trixie-repo-amd64:v2026.11.14
+  openresty-trixie-repo-amd64:v2026.11.18
 ```
 
 To bind to a different address or port, pass the arguments directly, since they replace the default `CMD`. `--network host` works only on Linux. Docker Desktop on macOS and Windows doesn't support it, so use the `-p` form there.
@@ -122,7 +121,7 @@ To bind to a different address or port, pass the arguments directly, since they 
 docker run -d \
   --name openresty-repo \
   --network host \
-  openresty-trixie-repo-amd64:v2026.11.14 --bind 127.0.0.1 9000
+  openresty-trixie-repo-amd64:v2026.11.18 --bind 127.0.0.1 9000
 ```
 
 The repository is served from the root (`dists/trixie/...` and `pool/openresty/...`). The public keys are available at `/openresty-mirror.asc` and `/openresty-upstream.asc`, and they are installed in `/etc/apt/keyrings` inside the image.
@@ -139,7 +138,7 @@ install -m 0644 -o 0 -g 0 openresty-mirror.asc /etc/apt/keyrings/openresty-mirro
 
 cat <<'EOF' > /etc/apt/sources.list.d/openresty.sources
 Types: deb
-URIs: http://<host>:8080
+URIs: http://<IP_OR_HOST>:8080
 Suites: trixie
 Components: openresty
 Signed-By: /etc/apt/keyrings/openresty-mirror.asc
@@ -150,25 +149,26 @@ apt-get update
 apt-get install -y --no-install-recommends openresty
 ```
 
-Replace `<host>` with the address of the machine running the container.
+Replace `<IP_OR_HOST>` with the address or DNS name of the machine running the container.
 
 ---
 
 ## Building Locally
 
-To build the `final` target directly, supply the three secrets that the release workflow uses.
+To build the `final` target directly, supply the four secrets that the release workflow uses.
 
 ```sh
 docker buildx build \
   --target final \
-  --secret id=apt_signing_key,src=mirror-private.asc \
+  --secret id=apt_signing_key_age,src=openresty-mirror-private.asc \
+  --secret id=age_identity,src=openresty-age-private.asc \
   --secret id=openresty_mirror_pub,src=openresty-mirror.asc \
   --secret id=openresty_upstream_pub,src=openresty-upstream.asc \
   -t openresty-trixie-repo-local \
   ./docker
 ```
 
-A local build uses the signing key you supply. The build fails unless that key matches the mirror public key in the build context. A local build's signatures will not match a published release.
+A local build uses the signing key that you supply. The build fails unless that key matches the mirror public key in the `openresty_mirror_pub` secret. A local build's signatures will not match a published release.
 
 ---
 
@@ -176,9 +176,9 @@ A local build uses the signing key you supply. The build fails unless that key m
 
 - **Only `amd64` is runtime-tested.** The smoke test loads and runs only the `amd64` image. The `arm64` archives are checked for signatures and checksums before publishing, but they are not loaded or run (see Smoke Test).
 - **The mirror is served over plain HTTP, by design.** APT signature checks are the integrity guarantee (see HTTP Service).
-- **The upstream key is trust-on-first-use.** It is not pinned to a fingerprint (see Upstream Fetch and Verification).
+- **The upstream key is always trusted.** It is not pinned to a fingerprint (see Upstream Fetch and Verification).
 - **Each release has a new signing key.** Clients must use the key from the same release (see What This Repository Produces).
 - **Snapshots never expire.** `Release` has no `Valid-Until` (see Signing and Freshness).
 - **NUL bytes in upstream `Packages` metadata are not handled.** Only `\r` is stripped (see Upstream Fetch and Verification).
 - **Bookworm packages are served as trixie.** The packages are not rebuilt, so compatibility depends on the upstream packages (see Upstream Fetch and Verification).
-- **The private signing key is passed between jobs as a GitHub job output.** GitHub does not mask job outputs, so the key is visible in run data. This is tracked in TODO.md.
+- **The encrypted private signing key is passed between jobs as a GitHub job output.** GitHub does not mask job outputs, so the encrypted private key is visible in run data.
