@@ -74,7 +74,10 @@ Each `.deb` in `/srv/repo/pool` has two companion files. A `.sha256` file contai
 
 You need `gpg`, `zstd`, `sha256sum` (coreutils), and `docker` installed on the host.
 
-Download the `.tar.zst` archive, its `.sha256` and `.sha256.asc` files, and the three key files into one directory. The example below uses the `amd64` archive from a release tagged `v2026.011.18`.
+
+Download the `.tar.zst` archive, both compressed and uncompressed checksum files (`.tar.zst.sha256` and `.tar.sha256`), their signature files (`.tar.zst.sha256.asc` and `.tar.sha256.asc`), and `openresty-mirror.asc` into one directory. The example imports only `openresty-mirror.asc`; the other two public-key assets are not needed for these verification commands. Run the commands from the directory containing the downloaded files. The uncompressed `.tar` is not a release asset; recreate it from `.tar.zst` before checking `.tar.sha256`.
+
+The example below uses the `amd64` archive from a release tagged `v2026.011.18`.
 
 ```sh
 set -euo pipefail
