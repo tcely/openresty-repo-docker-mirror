@@ -147,6 +147,7 @@ apt-ftparchive \
     -o APT::FTPArchive::Release::Codename="trixie" \
     -o APT::FTPArchive::Release::Architectures="amd64 arm64" \
     -o APT::FTPArchive::Release::Components="openresty" \
+    -o APT::FTPArchive::Release::ValidTime=157680000 \
     release dists/trixie > dists/trixie/Release
 
 gpg --batch --yes --default-key "${FPR}" \
