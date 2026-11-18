@@ -74,12 +74,12 @@ Each `.deb` in `/srv/repo/pool` has two companion files. A `.sha256` file contai
 
 You need `gpg`, `zstd`, `sha256sum` (coreutils), and `docker` installed on the host.
 
-Download the `.tar.zst` archive, its `.sha256` and `.sha256.asc` files, and the three key files into one directory. The example below uses the `amd64` archive from a release tagged `v2026.11.18`.
+Download the `.tar.zst` archive, its `.sha256` and `.sha256.asc` files, and the three key files into one directory. The example below uses the `amd64` archive from a release tagged `v2026.011.18`.
 
 ```sh
 set -euo pipefail
 
-TAG=v2026.11.18
+TAG=v2026.011.18
 BASE="openresty-trixie-repo-amd64-${TAG}"
 
 WORK_DIR="$(mktemp -d)"
@@ -100,7 +100,7 @@ docker load -i "${BASE}.tar"
 rm -f "${BASE}.tar"
 ```
 
-After loading, the image is named `openresty-trixie-repo-amd64:v2026.11.18`.
+After loading, the image is named `openresty-trixie-repo-amd64:v2026.011.18`.
 
 ---
 
@@ -112,7 +112,7 @@ The container runs as `65534:65534`. Its default command binds to `0.0.0.0` on p
 docker run -d \
   --name openresty-repo \
   -p 8080:8080 \
-  openresty-trixie-repo-amd64:v2026.11.18
+  openresty-trixie-repo-amd64:v2026.011.18
 ```
 
 To bind to a different address or port, pass the arguments directly, since they replace the default `CMD`. `--network host` works only on Linux. Docker Desktop on macOS and Windows doesn't support it, so use the `-p` form there.
@@ -121,7 +121,7 @@ To bind to a different address or port, pass the arguments directly, since they 
 docker run -d \
   --name openresty-repo \
   --network host \
-  openresty-trixie-repo-amd64:v2026.11.18 --bind 127.0.0.1 9000
+  openresty-trixie-repo-amd64:v2026.011.18 --bind 127.0.0.1 9000
 ```
 
 The repository is served from the root (`dists/trixie/...` and `pool/openresty/...`). The public keys are available at `/openresty-mirror.asc` and `/openresty-upstream.asc`, and they are installed in `/etc/apt/keyrings` inside the image.
@@ -168,7 +168,7 @@ docker buildx build \
   ./docker
 ```
 
-A local build uses the signing key that you supply. The build fails unless that key matches the mirror public key in the `openresty_mirror_pub` secret. A local build's signatures will not match a published release.
+A local build uses the signing key that you supply. The build fails unless that key matches the public key in the `openresty_mirror_pub` secret. A local build's signatures will not match a published release.
 
 ---
 
