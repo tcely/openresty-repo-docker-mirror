@@ -7,7 +7,7 @@
   Suggested wording for **Build Pipeline**:
   > The BuildKit secret `age_identity` is supplied from the monthly GitHub secret slots. The age-identity rotation and verification workflows manage and validate those slots; `age_identity` is separate from the outputs of `prepare-key`.
 
-- [ ] Fix the release-verification download instructions.
+- [x] Fix the release-verification download instructions.
   
   Suggested replacement:
   > Download the `.tar.zst` archive, both compressed and uncompressed checksum files (`.tar.zst.sha256` and `.tar.sha256`), their signature files (`.tar.zst.sha256.asc` and `.tar.sha256.asc`), and `openresty-mirror.asc` into one directory. The example imports only `openresty-mirror.asc`; the other two public-key assets are not needed for these verification commands. Run the commands from the directory containing the downloaded files. The uncompressed `.tar` is not a release asset; recreate it from `.tar.zst` before checking `.tar.sha256`.
