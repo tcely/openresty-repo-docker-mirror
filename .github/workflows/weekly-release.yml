@@ -19,6 +19,8 @@ jobs:
       release-tag: ${{ steps.meta.outputs.tag }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Set weekly release tag
         id: meta
@@ -85,6 +87,8 @@ jobs:
         uses: docker/setup-buildx-action@v4
 
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Prepare temporary staging directories
         id: stage
