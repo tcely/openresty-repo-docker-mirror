@@ -1,5 +1,33 @@
 # TODO
 
+## README follow-ups
+
+- [ ] Clarify the `age_identity` secret and monthly rotation.
+  
+  Suggested wording for **Build Pipeline**:
+  > The BuildKit secret `age_identity` is supplied from the monthly GitHub secret slots. The age-identity rotation and verification workflows manage and validate those slots; `age_identity` is separate from the outputs of `prepare-key`.
+
+- [ ] Fix the release-verification download instructions.
+  
+  Suggested replacement:
+  > Download the `.tar.zst` archive, both compressed and uncompressed checksum files (`.tar.zst.sha256` and `.tar.sha256`), their signature files (`.tar.zst.sha256.asc` and `.tar.sha256.asc`), and `openresty-mirror.asc` into one directory. The example imports only `openresty-mirror.asc`; the other two public-key assets are not needed for these verification commands. Run the commands from the directory containing the downloaded files. The uncompressed `.tar` is not a release asset; recreate it from `.tar.zst` before checking `.tar.sha256`.
+
+- [ ] Explain what happens when a manual run uses a date tag that already exists.
+  
+  Suggested wording for **Build Pipeline**:
+  > Release tags are date-based and immutable. If a release has already been published for a tag, another run using that tag cannot publish a replacement release.
+
+- [ ] Explain the date-tag notation.
+  
+  Suggested wording for **What This Repository Produces**:
+  > Release tags use the format `vYYYY.0MM.DD`, where `0` is a literal prefix before the two-digit month. For example, November 18, 2026 is tagged `v2026.011.18`.
+
+- [ ] Distinguish unchanged package files from regenerated repository metadata.
+  
+  Suggested replacement for the “only change” sentence in **Upstream Fetch and Verification**:
+  > The `.deb` package files are not modified. The repository metadata is cleaned and re-indexed, the suite and codename are set to `trixie`, and the resulting index is signed with the mirror key.
+
+
 ## Pending
 
 - [ ] **Extend `.gitignore`.** Several generated files are not ignored yet.
