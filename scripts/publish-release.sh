@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euxo pipefail
+set -euo pipefail
 
 : "${AGE_ENCRYPTED_PRIVATE_KEY:?AGE_ENCRYPTED_PRIVATE_KEY is required}"
 : "${AGE_IDENTITY:?AGE_IDENTITY is required}"
@@ -8,6 +8,7 @@ set -euxo pipefail
 : "${ROOTFS_DIR:?ROOTFS_DIR is required}"
 : "${GH_TOKEN:?GH_TOKEN is required}"
 
+set -x
 command -v age >/dev/null
 
 WORK_DIR="$(mktemp -d)"
@@ -25,7 +26,7 @@ PRIVATE_KEY_FILE="${WORK_DIR}/apt-signing-key.asc"
 
 ( set +x ; printf '%s\n' "${AGE_IDENTITY}" >| "${IDENTITY_FILE}" )
 chmod 00600 "${IDENTITY_FILE}"
-printf '%s' "${AGE_ENCRYPTED_PRIVATE_KEY}" >| "${CIPHERTEXT_FILE}"
+( set +x ; printf '%s' "${AGE_ENCRYPTED_PRIVATE_KEY}" >| "${CIPHERTEXT_FILE}" )
 chmod 00600 "${CIPHERTEXT_FILE}"
 
 age -d -i "${IDENTITY_FILE}" -o "${PRIVATE_KEY_FILE}" "${CIPHERTEXT_FILE}"
