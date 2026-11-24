@@ -4,12 +4,26 @@ on:
   schedule:
     - cron: '13 18 * * 2'
   workflow_dispatch:
+  workflow_run:
+    types:
+      - 'completed'
+    workflows: ["Tag Checker"]
 
 permissions:
   contents: write
 
 jobs:
+  tag-checker:
+    # Manual runs are allowed through. For workflow_run, require Tag Checker success.
+    if: ${{ 'workflow_dispatch' == github.event_name || 'success' == github.event.workflow_run.conclusion }}
+    runs-on: ubuntu-slim
+    steps:
+      - name: Tag Checker Result
+        shell: 'bash'
+        run: printf '%s\n' 'Passed'
+
   prepare-key:
+    needs: 'tag-checker'
     runs-on: ubuntu-slim
     outputs:
       age-encrypted-private-key: ${{ steps.keygen.outputs.age_encrypted_private_key }}
@@ -54,7 +68,7 @@ jobs:
           retention-days: 10
 
   build:
-    needs: prepare-key
+    needs: 'prepare-key'
     uses: docker/github-builder/.github/workflows/build.yml@v1
     permissions:
       contents: read
@@ -77,7 +91,9 @@ jobs:
         openresty_upstream_pub: ${{ toJSON(needs.prepare-key.outputs.gpg-upstream-pub) }}
 
   publish-release:
-    needs: [prepare-key, build]
+    needs:
+      - 'prepare-key'
+      - 'build'
     runs-on: ubuntu-latest
     steps:
       - name: Set up QEMU
