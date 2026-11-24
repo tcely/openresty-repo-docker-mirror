@@ -115,6 +115,7 @@ do
         --summary-interval=0 \
         --console-log-level=warn \
         --show-console-readout=false \
+        --download-result=hide \
         --check-certificate=true \
         --min-tls-version=TLSv1.2 \
         --follow-metalink=false \
