@@ -99,7 +99,7 @@ do
         [[ "${TARGET_FILE}" == /srv/repo/pool/* ]]
 
         mkdir -p "$(dirname "${TARGET_FILE}")"
-        printf '%s *%s\n' "${expected_sha}" "${TARGET_FILE}" >| "${TARGET_FILE}.sha256"
+        printf '%s *%s\n' "${expected_sha}" "${relpath}" >| "${TARGET_FILE}.sha256"
         printf '%s/%s\n' "${UPSTREAM}" "${relpath}" >| "${TARGET_FILE}.url"
 
         {
