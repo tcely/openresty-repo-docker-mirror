@@ -3,6 +3,7 @@ name: Weekly Release
 on:
   schedule:
     - cron: '13 18 * * 2'
+      timezone: "Etc/UTC"
   workflow_dispatch:
 
 permissions:
